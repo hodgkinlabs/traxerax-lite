@@ -33,7 +33,12 @@ def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
 
     match = FAILED_PATTERN.match(line)
     if match:
-        return _build_event(match, line, "ssh_failed_login", year)
+        user = match.group("user")
+        event_type = "ssh_failed_login"
+        if user == "root":
+            event_type = "ssh_root_login_attempt"
+
+        return _build_event(match, line, event_type, year)
 
     match = SUCCESS_PATTERN.match(line)
     if match:
