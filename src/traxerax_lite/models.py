@@ -19,3 +19,16 @@ class Event:
     service: Optional[str] = None
     hostname: Optional[str] = None
     process: Optional[str] = None
+
+
+@dataclass(slots=True)
+class Finding:
+    """Detection finding generated from one or more events."""
+
+    finding_type: str
+    severity: str
+    message: str
+    src_ip: Optional[str]
+    timestamp: datetime
+
+    
