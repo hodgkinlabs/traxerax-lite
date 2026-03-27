@@ -30,5 +30,3 @@ class Finding:
     message: str
     src_ip: Optional[str]
     timestamp: datetime
-
-    
