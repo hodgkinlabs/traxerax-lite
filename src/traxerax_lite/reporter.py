@@ -10,6 +10,9 @@ def format_event(event: Event) -> str:
     user = event.username or "-"
     host = event.hostname or "-"
     process = event.process or "-"
+    service = event.service or "-"
+    action = event.action or "-"
+    jail = event.jail or "-"
 
     return (
         f"[EVENT] {timestamp} "
@@ -18,7 +21,10 @@ def format_event(event: Event) -> str:
         f"ip={ip} "
         f"user={user} "
         f"host={host} "
-        f"process={process}"
+        f"process={process} "
+        f"service={service} "
+        f"action={action} "
+        f"jail={jail}"
     )
 
 

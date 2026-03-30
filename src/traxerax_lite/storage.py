@@ -36,7 +36,9 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             port INTEGER,
             service TEXT,
             hostname TEXT,
-            process TEXT
+            process TEXT,
+            action TEXT,
+            jail TEXT
         )
         """
     )
@@ -71,9 +73,11 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             port,
             service,
             hostname,
-            process
+            process,
+            action,
+            jail
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.timestamp.isoformat(sep=" "),
@@ -86,6 +90,8 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             event.service,
             event.hostname,
             event.process,
+            event.action,
+            event.jail,
         ),
     )
     connection.commit()

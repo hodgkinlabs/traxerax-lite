@@ -31,6 +31,9 @@ def test_format_event_includes_core_fields() -> None:
     assert "user=user1" in output
     assert "host=debian" in output
     assert "process=sshd" in output
+    assert "service=ssh" in output
+    assert "action=-" in output
+    assert "jail=-" in output
 
 
 def test_format_event_uses_dash_for_missing_optional_fields() -> None:
@@ -46,6 +49,8 @@ def test_format_event_uses_dash_for_missing_optional_fields() -> None:
         service=None,
         hostname=None,
         process=None,
+        action=None,
+        jail=None,
     )
 
     output = format_event(event)
@@ -55,6 +60,32 @@ def test_format_event_uses_dash_for_missing_optional_fields() -> None:
     assert "user=-" in output
     assert "host=-" in output
     assert "process=-" in output
+    assert "service=-" in output
+    assert "action=-" in output
+    assert "jail=-" in output
+
+
+def test_format_fail2ban_event_includes_action_and_jail() -> None:
+    """Formatted fail2ban events should show action and jail values."""
+    event = Event(
+        timestamp=datetime(2026, 3, 25, 10, 0, 8),
+        source="fail2ban",
+        event_type="fail2ban_ban",
+        raw="test raw line",
+        src_ip="185.10.10.1",
+        service="sshd",
+        process="fail2ban",
+        action="ban",
+        jail="actions",
+    )
+
+    output = format_event(event)
+
+    assert "source=fail2ban" in output
+    assert "type=fail2ban_ban" in output
+    assert "service=sshd" in output
+    assert "action=ban" in output
+    assert "jail=actions" in output
 
 
 def test_format_finding_includes_core_fields() -> None:

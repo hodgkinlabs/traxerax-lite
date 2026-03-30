@@ -1,6 +1,6 @@
-"""Tests for auth log parsing."""
+"""Tests for log parsing."""
 
-from traxerax_lite.parser import parse_auth_line
+from traxerax_lite.parser import parse_auth_line, parse_fail2ban_line
 
 
 def test_parse_failed_login() -> None:
@@ -54,7 +54,7 @@ def test_parse_success_login() -> None:
     assert event.port == 50001
 
 
-def test_parse_unsupported_line_returns_none() -> None:
+def test_parse_unsupported_auth_line_returns_none() -> None:
     """Unsupported auth lines should return None."""
     line = (
         "Mar 25 10:02:00 debian CRON[2100]: pam_unix(cron:session): "
@@ -62,5 +62,50 @@ def test_parse_unsupported_line_returns_none() -> None:
     )
 
     event = parse_auth_line(line, year=2026)
+
+    assert event is None
+
+
+def test_parse_fail2ban_ban_line() -> None:
+    """Fail2ban ban lines should parse into normalized events."""
+    line = (
+        "2026-03-25 10:00:08,123 fail2ban.actions        [3001]: "
+        "NOTICE  [sshd] Ban 185.10.10.1"
+    )
+
+    event = parse_fail2ban_line(line)
+
+    assert event is not None
+    assert event.source == "fail2ban"
+    assert event.event_type == "fail2ban_ban"
+    assert event.src_ip == "185.10.10.1"
+    assert event.service == "sshd"
+    assert event.action == "ban"
+    assert event.jail == "actions"
+
+
+def test_parse_fail2ban_unban_line() -> None:
+    """Fail2ban unban lines should parse into normalized events."""
+    line = (
+        "2026-03-25 10:10:08,456 fail2ban.actions        [3001]: "
+        "NOTICE  [sshd] Unban 185.10.10.1"
+    )
+
+    event = parse_fail2ban_line(line)
+
+    assert event is not None
+    assert event.event_type == "fail2ban_unban"
+    assert event.src_ip == "185.10.10.1"
+    assert event.action == "unban"
+
+
+def test_parse_unsupported_fail2ban_line_returns_none() -> None:
+    """Unsupported fail2ban lines should return None."""
+    line = (
+        "2026-03-25 10:15:00,000 fail2ban.server [3001]: "
+        "INFO Starting Fail2ban"
+    )
+
+    event = parse_fail2ban_line(line)
 
     assert event is None

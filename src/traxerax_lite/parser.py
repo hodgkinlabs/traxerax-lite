@@ -22,6 +22,16 @@ SUCCESS_PATTERN = re.compile(
     r"(?P<ip>\S+)\s+port\s+(?P<port>\d+)"
 )
 
+FAIL2BAN_PATTERN = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+\s+"
+    r"fail2ban\.(?P<jail>[\w\-]+)\s+"
+    r"\[\d+\]:\s+"
+    r"(?:NOTICE|INFO)\s+"
+    r"\[(?P<service>[\w\-]+)\]\s+"
+    r"(?P<action>Ban|Unban)\s+"
+    r"(?P<ip>\S+)"
+)
+
 
 def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
     """Parse a single auth log line."""
@@ -38,29 +48,60 @@ def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
         if user == "root":
             event_type = "ssh_root_login_attempt"
 
-        return _build_event(match, line, event_type, year)
+        return _build_auth_event(match, line, event_type, year)
 
     match = SUCCESS_PATTERN.match(line)
     if match:
-        return _build_event(match, line, "ssh_success_login", year)
+        return _build_auth_event(match, line, "ssh_success_login", year)
 
     return None
 
 
-def _build_event(
+def parse_fail2ban_line(line: str) -> Optional[Event]:
+    """Parse a single fail2ban log line."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    match = FAIL2BAN_PATTERN.match(stripped)
+    if not match:
+        return None
+
+    timestamp = datetime.strptime(
+        match.group("ts"),
+        "%Y-%m-%d %H:%M:%S",
+    )
+
+    action = match.group("action").lower()
+    event_type = f"fail2ban_{action}"
+
+    return Event(
+        timestamp=timestamp,
+        source="fail2ban",
+        event_type=event_type,
+        raw=stripped,
+        src_ip=match.group("ip"),
+        service=match.group("service"),
+        process="fail2ban",
+        action=action,
+        jail=match.group("jail"),
+    )
+
+
+def _build_auth_event(
     match: re.Match[str],
     raw: str,
     event_type: str,
     year: int,
 ) -> Event:
-    """Build Event object."""
-    ts = datetime.strptime(
+    """Build Event object from auth log regex match."""
+    timestamp = datetime.strptime(
         f"{year} {match.group('ts')}",
         "%Y %b %d %H:%M:%S",
     )
 
     return Event(
-        timestamp=ts,
+        timestamp=timestamp,
         source="auth",
         event_type=event_type,
         raw=raw,

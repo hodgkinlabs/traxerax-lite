@@ -3,7 +3,7 @@
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.detector import DetectionState, process_event
-from traxerax_lite.parser import parse_auth_line
+from traxerax_lite.parser import parse_auth_line, parse_fail2ban_line
 from traxerax_lite.reporter import format_event, format_finding
 from traxerax_lite.storage import (
     get_connection,
@@ -18,6 +18,12 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    if not args.auth_log and not args.fail2ban_log:
+        parser.error(
+            "at least one log source must be provided: "
+            "--auth-log or --fail2ban-log"
+        )
+
     state = DetectionState()
     parsed_count = 0
     finding_count = 0
@@ -26,20 +32,31 @@ def main() -> None:
     initialize_database(connection)
 
     try:
-        for line in read_lines(args.auth_log):
-            event = parse_auth_line(line, year=args.year)
-            if event is None:
-                continue
+        if args.auth_log:
+            for line in read_lines(args.auth_log):
+                event = parse_auth_line(line, year=args.year)
+                if event is None:
+                    continue
 
-            parsed_count += 1
-            print(format_event(event))
-            insert_event(connection, event)
+                parsed_count += 1
+                print(format_event(event))
+                insert_event(connection, event)
 
-            findings = process_event(event, state)
-            for finding in findings:
-                finding_count += 1
-                print(format_finding(finding))
-                insert_finding(connection, finding)
+                findings = process_event(event, state)
+                for finding in findings:
+                    finding_count += 1
+                    print(format_finding(finding))
+                    insert_finding(connection, finding)
+
+        if args.fail2ban_log:
+            for line in read_lines(args.fail2ban_log):
+                event = parse_fail2ban_line(line)
+                if event is None:
+                    continue
+
+                parsed_count += 1
+                print(format_event(event))
+                insert_event(connection, event)
 
         print("\n[SUMMARY]")
         print(f"parsed_events={parsed_count}")

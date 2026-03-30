@@ -4,21 +4,26 @@ import argparse
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Replay auth logs and parse events"
+        description="Replay security logs and parse events",
     )
 
     parser.add_argument(
         "--auth-log",
-        required=True,
         help="Path to auth log file",
+    )
+
+    parser.add_argument(
+        "--fail2ban-log",
+        help="Path to fail2ban log file",
     )
 
     parser.add_argument(
         "--year",
         type=int,
         default=None,
-        help="Optional year override",
+        help="Optional year override for syslog-style timestamps",
     )
 
     return parser
