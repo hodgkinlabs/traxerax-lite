@@ -19,6 +19,8 @@ class Event:
     service: Optional[str] = None
     hostname: Optional[str] = None
     process: Optional[str] = None
+    action: Optional[str] = None
+    jail: Optional[str] = None
 
 
 @dataclass(slots=True)

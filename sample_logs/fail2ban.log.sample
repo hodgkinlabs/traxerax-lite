@@ -1,0 +1,3 @@
+2026-03-25 10:00:08,123 fail2ban.actions        [3001]: NOTICE  [sshd] Ban 185.10.10.1
+2026-03-25 10:10:08,456 fail2ban.actions        [3001]: NOTICE  [sshd] Unban 185.10.10.1
+2026-03-25 10:12:30,789 fail2ban.actions        [3001]: NOTICE  [postfix-sasl] Ban 198.51.100.20
