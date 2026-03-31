@@ -1,4 +1,4 @@
-"""SQLite query helpers for summary reporting."""
+"""SQLite query helpers for summary and investigation reporting."""
 
 import sqlite3
 
@@ -125,5 +125,54 @@ def get_top_ips_by_finding_count(
         LIMIT ?
         """,
         (limit,),
+    )
+    return cursor.fetchall()
+
+
+def get_events_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return ordered events for a given source IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            timestamp,
+            source,
+            event_type,
+            username,
+            port,
+            service,
+            hostname,
+            process,
+            action,
+            jail,
+            raw
+        FROM events
+        WHERE src_ip = ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
+def get_findings_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return ordered findings for a given source IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            timestamp,
+            finding_type,
+            severity,
+            message
+        FROM findings
+        WHERE src_ip = ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (src_ip,),
     )
     return cursor.fetchall()

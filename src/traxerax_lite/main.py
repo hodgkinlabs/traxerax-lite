@@ -4,7 +4,7 @@ from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.detector import DetectionState, process_event
 from traxerax_lite.parser import parse_auth_line, parse_fail2ban_line
-from traxerax_lite.report_queries import build_summary_report
+from traxerax_lite.report_queries import build_ip_report, build_summary_report
 from traxerax_lite.reporter import format_event, format_finding
 from traxerax_lite.storage import (
     get_connection,
@@ -26,12 +26,18 @@ def main() -> None:
         if args.report:
             if args.report == "summary":
                 print(build_summary_report(connection))
-            return
+                return
+
+            if args.report == "ip":
+                if not args.ip:
+                    parser.error("--report ip requires --ip")
+                print(build_ip_report(connection, args.ip))
+                return
 
         if not args.auth_log and not args.fail2ban_log:
             parser.error(
                 "at least one log source must be provided: "
-                "--auth-log or --fail2ban-log, or use --report summary"
+                "--auth-log or --fail2ban-log, or use --report"
             )
 
         state = DetectionState()
