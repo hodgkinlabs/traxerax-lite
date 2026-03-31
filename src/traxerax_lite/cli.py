@@ -6,7 +6,7 @@ import argparse
 def build_parser() -> argparse.ArgumentParser:
     """Build and return CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Replay security logs and parse events",
+        description="Replay security logs and generate reports",
     )
 
     parser.add_argument(
@@ -24,6 +24,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Optional year override for syslog-style timestamps",
+    )
+
+    parser.add_argument(
+        "--report",
+        choices=["summary"],
+        help="Generate a report from stored SQLite data",
+    )
+
+    parser.add_argument(
+        "--db-path",
+        default="data/output/traxerax_lite.db",
+        help="Path to SQLite database file",
     )
 
     return parser
