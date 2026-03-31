@@ -8,12 +8,14 @@ from traxerax_lite.models import Event, Finding
 
 @dataclass
 class DetectionState:
-    """In-memory state for simple detections."""
+    """In-memory state for detections and simple correlations."""
 
     failed_counts: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
     )
     threshold_alerted: set[str] = field(default_factory=set)
+    auth_activity_ips: set[str] = field(default_factory=set)
+    fail2ban_alerted: set[str] = field(default_factory=set)
 
 
 def process_event(event: Event, state: DetectionState) -> list[Finding]:
@@ -22,6 +24,24 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
 
     if event.src_ip is None:
         return findings
+
+    if event.source == "auth":
+        findings.extend(_process_auth_event(event, state))
+
+    if event.source == "fail2ban":
+        findings.extend(_process_fail2ban_event(event, state))
+
+    return findings
+
+
+def _process_auth_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized auth event."""
+    findings: list[Finding] = []
+
+    state.auth_activity_ips.add(event.src_ip)
 
     if event.event_type == "ssh_root_login_attempt":
         findings.append(
@@ -69,6 +89,35 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
                         "Successful SSH login after prior failures from "
                         f"{event.src_ip} "
                         f"({prior_failures} failures before success)"
+                    ),
+                    src_ip=event.src_ip,
+                    timestamp=event.timestamp,
+                )
+            )
+
+    return findings
+
+
+def _process_fail2ban_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized fail2ban event."""
+    findings: list[Finding] = []
+
+    if event.event_type == "fail2ban_ban":
+        if (
+            event.src_ip in state.auth_activity_ips
+            and event.src_ip not in state.fail2ban_alerted
+        ):
+            state.fail2ban_alerted.add(event.src_ip)
+            findings.append(
+                Finding(
+                    finding_type="ip_banned_after_auth_activity",
+                    severity="medium",
+                    message=(
+                        "IP seen in auth activity was later banned by "
+                        f"fail2ban: {event.src_ip}"
                     ),
                     src_ip=event.src_ip,
                     timestamp=event.timestamp,
