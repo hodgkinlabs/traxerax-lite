@@ -28,8 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--report",
-        choices=["summary"],
+        choices=["summary", "ip"],
         help="Generate a report from stored SQLite data",
+    )
+
+    parser.add_argument(
+        "--ip",
+        help="Source IP for per-IP investigation report",
     )
 
     parser.add_argument(
