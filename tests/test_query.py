@@ -82,7 +82,7 @@ def test_get_finding_counts_by_type_returns_grouped_counts() -> None:
         Finding(
             finding_type="root_login_attempt",
             severity="medium",
-            message="Root login attempt",
+            message="Root login attempt 1",
             src_ip="185.10.10.1",
             timestamp=datetime(2026, 3, 25, 10, 0, 5),
         ),
@@ -92,7 +92,7 @@ def test_get_finding_counts_by_type_returns_grouped_counts() -> None:
         Finding(
             finding_type="root_login_attempt",
             severity="medium",
-            message="Root login attempt",
+            message="Root login attempt 2",
             src_ip="185.10.10.2",
             timestamp=datetime(2026, 3, 25, 10, 0, 6),
         ),
@@ -124,27 +124,49 @@ def test_get_top_event_source_ips_returns_ranked_ips() -> None:
     connection = get_connection(":memory:")
     initialize_database(connection)
 
-    for _ in range(3):
-        insert_event(
-            connection,
-            Event(
-                timestamp=datetime(2026, 3, 25, 10, 0, 1),
-                source="auth",
-                event_type="ssh_failed_login",
-                raw="raw",
-                src_ip="185.10.10.1",
-                service="ssh",
-                process="sshd",
-            ),
-        )
-
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="raw1",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    )
     insert_event(
         connection,
         Event(
             timestamp=datetime(2026, 3, 25, 10, 0, 2),
             source="auth",
             event_type="ssh_failed_login",
-            raw="raw",
+            raw="raw2",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 3),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="raw3",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 4),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="raw4",
             src_ip="203.0.113.77",
             service="ssh",
             process="sshd",
@@ -166,18 +188,26 @@ def test_get_top_finding_source_ips_returns_ranked_ips() -> None:
     connection = get_connection(":memory:")
     initialize_database(connection)
 
-    for _ in range(2):
-        insert_finding(
-            connection,
-            Finding(
-                finding_type="root_login_attempt",
-                severity="medium",
-                message="Root login attempt",
-                src_ip="185.10.10.1",
-                timestamp=datetime(2026, 3, 25, 10, 0, 5),
-            ),
-        )
-
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="root_login_attempt",
+            severity="medium",
+            message="Root login attempt 1",
+            src_ip="185.10.10.1",
+            timestamp=datetime(2026, 3, 25, 10, 0, 5),
+        ),
+    )
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="root_login_attempt",
+            severity="medium",
+            message="Root login attempt 2",
+            src_ip="185.10.10.1",
+            timestamp=datetime(2026, 3, 25, 10, 0, 6),
+        ),
+    )
     insert_finding(
         connection,
         Finding(
