@@ -1,34 +1,40 @@
-"""Tests for detection logic."""
+"""Tests for detection and correlation logic."""
+
+from datetime import datetime
 
 from traxerax_lite.detector import DetectionState, process_event
 from traxerax_lite.models import Event
-
-from datetime import datetime
 
 
 def make_event(
     event_type: str,
     src_ip: str,
-    username: str,
+    username: str | None = None,
+    source: str = "auth",
+    service: str = "ssh",
+    action: str | None = None,
+    jail: str | None = None,
 ) -> Event:
     """Build a minimal Event for detector tests."""
     return Event(
         timestamp=datetime(2026, 3, 25, 10, 0, 0),
-        source="auth",
+        source=source,
         event_type=event_type,
         raw="test raw line",
         username=username,
         src_ip=src_ip,
         port=22,
-        service="ssh",
+        service=service,
         hostname="debian",
-        process="sshd",
+        process="sshd" if source == "auth" else "fail2ban",
+        action=action,
+        jail=jail,
     )
 
 
 def test_root_login_attempt_generates_finding() -> None:
     """A root login attempt should create a root-specific finding."""
-    state = DetectionState() 
+    state = DetectionState()
     event = make_event(
         event_type="ssh_root_login_attempt",
         src_ip="185.10.10.1",
@@ -93,3 +99,77 @@ def test_success_without_failures_generates_no_finding() -> None:
     findings = process_event(event, state)
 
     assert findings == []
+
+
+def test_fail2ban_ban_after_auth_activity_generates_finding() -> None:
+    """A fail2ban ban after auth activity should generate correlation."""
+    state = DetectionState()
+    ip = "185.10.10.1"
+
+    auth_event = make_event("ssh_failed_login", ip, "admin")
+    ban_event = make_event(
+        event_type="fail2ban_ban",
+        src_ip=ip,
+        source="fail2ban",
+        service="sshd",
+        action="ban",
+        jail="actions",
+    )
+
+    process_event(auth_event, state)
+    findings = process_event(ban_event, state)
+
+    assert len(findings) == 1
+    assert findings[0].finding_type == "ip_banned_after_auth_activity"
+    assert findings[0].severity == "medium"
+    assert findings[0].src_ip == ip
+
+
+def test_fail2ban_ban_without_auth_activity_generates_no_finding() -> None:
+    """A ban with no prior auth activity should not create correlation."""
+    state = DetectionState()
+
+    ban_event = make_event(
+        event_type="fail2ban_ban",
+        src_ip="198.51.100.20",
+        source="fail2ban",
+        service="sshd",
+        action="ban",
+        jail="actions",
+    )
+
+    findings = process_event(ban_event, state)
+
+    assert findings == []
+
+
+def test_fail2ban_ban_correlation_triggers_once_per_ip() -> None:
+    """Correlation finding should only trigger once for a banned IP."""
+    state = DetectionState()
+    ip = "185.10.10.1"
+
+    auth_event = make_event("ssh_failed_login", ip, "admin")
+    ban_event_1 = make_event(
+        event_type="fail2ban_ban",
+        src_ip=ip,
+        source="fail2ban",
+        service="sshd",
+        action="ban",
+        jail="actions",
+    )
+    ban_event_2 = make_event(
+        event_type="fail2ban_ban",
+        src_ip=ip,
+        source="fail2ban",
+        service="sshd",
+        action="ban",
+        jail="actions",
+    )
+
+    process_event(auth_event, state)
+    findings_1 = process_event(ban_event_1, state)
+    findings_2 = process_event(ban_event_2, state)
+
+    assert len(findings_1) == 1
+    assert findings_1[0].finding_type == "ip_banned_after_auth_activity"
+    assert findings_2 == []
