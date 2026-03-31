@@ -2,7 +2,8 @@
 
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Iterable, Optional
+from urllib.parse import urlsplit
 
 from traxerax_lite.models import Event
 
@@ -38,35 +39,32 @@ NGINX_ACCESS_PATTERN = re.compile(
     r'(?P<status>\d{3})\s+\S+'
 )
 
-SUSPICIOUS_PATHS = {
-    "/wp-login.php",
-    "/xmlrpc.php",
-    "/.env",
-    "/admin",
-    "/phpmyadmin",
-}
-
 
 def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
     """Parse a single auth log line."""
-    line = line.strip()
-    if not line:
+    stripped = line.strip()
+    if not stripped:
         return None
 
-    year = year or datetime.now().year
+    parsed_year = year or datetime.now().year
 
-    match = FAILED_PATTERN.match(line)
+    match = FAILED_PATTERN.match(stripped)
     if match:
         user = match.group("user")
         event_type = "ssh_failed_login"
         if user == "root":
             event_type = "ssh_root_login_attempt"
 
-        return _build_auth_event(match, line, event_type, year)
+        return _build_auth_event(match, stripped, event_type, parsed_year)
 
-    match = SUCCESS_PATTERN.match(line)
+    match = SUCCESS_PATTERN.match(stripped)
     if match:
-        return _build_auth_event(match, line, "ssh_success_login", year)
+        return _build_auth_event(
+            match,
+            stripped,
+            "ssh_success_login",
+            parsed_year,
+        )
 
     return None
 
@@ -102,7 +100,16 @@ def parse_fail2ban_line(line: str) -> Optional[Event]:
     )
 
 
-def parse_nginx_access_line(line: str) -> Optional[Event]:
+def is_suspicious_path(path: str, suspicious_paths: Iterable[str]) -> bool:
+    """Return True if path matches configured suspicious targets."""
+    normalized = urlsplit(path).path.rstrip("/") or "/"
+    return normalized in suspicious_paths
+
+
+def parse_nginx_access_line(
+    line: str,
+    suspicious_paths: Iterable[str],
+) -> Optional[Event]:
     """Parse a single nginx access log line."""
     stripped = line.strip()
     if not stripped:
@@ -119,7 +126,7 @@ def parse_nginx_access_line(line: str) -> Optional[Event]:
 
     path = match.group("path")
     event_type = "nginx_request"
-    if path in SUSPICIOUS_PATHS:
+    if is_suspicious_path(path, suspicious_paths):
         event_type = "nginx_suspicious_request"
 
     return Event(

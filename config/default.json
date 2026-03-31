@@ -1,0 +1,11 @@
+{
+    "nginx": {
+        "suspicious_paths": [
+            "/wp-login.php",
+            "/xmlrpc.php",
+            "/.env",
+            "/admin",
+            "/phpmyadmin"
+        ]
+    }
+}

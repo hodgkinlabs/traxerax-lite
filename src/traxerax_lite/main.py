@@ -2,6 +2,7 @@
 
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
+from traxerax_lite.config import load_config
 from traxerax_lite.detector import DetectionState, process_event
 from traxerax_lite.parser import (
     parse_auth_line,
@@ -22,6 +23,9 @@ def main() -> None:
     """Run the application."""
     parser = build_parser()
     args = parser.parse_args()
+
+    config = load_config()
+    nginx_paths = config["nginx"]["suspicious_paths"]
 
     connection = get_connection(args.db_path)
     initialize_database(connection)
@@ -82,7 +86,7 @@ def main() -> None:
 
         if args.nginx_log:
             for line in read_lines(args.nginx_log):
-                event = parse_nginx_access_line(line)
+                event = parse_nginx_access_line(line, nginx_paths)
                 if event is None:
                     continue
 

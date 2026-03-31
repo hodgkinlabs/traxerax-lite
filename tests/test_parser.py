@@ -122,7 +122,10 @@ def test_parse_nginx_regular_request() -> None:
         '"GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0"'
     )
 
-    event = parse_nginx_access_line(line)
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths=set(),
+    )
 
     assert event is not None
     assert event.source == "nginx"
@@ -140,7 +143,10 @@ def test_parse_nginx_suspicious_request() -> None:
         '"GET /wp-login.php HTTP/1.1" 404 153 "-" "Mozilla/5.0"'
     )
 
-    event = parse_nginx_access_line(line)
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths={"/wp-login.php"},
+    )
 
     assert event is not None
     assert event.event_type == "nginx_suspicious_request"
@@ -154,6 +160,9 @@ def test_parse_unsupported_nginx_line_returns_none() -> None:
     """Unsupported nginx lines should return None."""
     line = "not a real nginx access log line"
 
-    event = parse_nginx_access_line(line)
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths=set(),
+    )
 
     assert event is None
