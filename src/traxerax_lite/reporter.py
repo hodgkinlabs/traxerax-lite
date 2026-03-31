@@ -5,7 +5,7 @@ from traxerax_lite.models import Event, Finding
 
 def format_event(event: Event) -> str:
     """Return a concise terminal-friendly event string."""
-    timestamp = event.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = event.timestamp.strftime("%Y-%m-%d %H:%M:%S%z")
     ip = event.src_ip or "-"
     user = event.username or "-"
     host = event.hostname or "-"
@@ -13,6 +13,9 @@ def format_event(event: Event) -> str:
     service = event.service or "-"
     action = event.action or "-"
     jail = event.jail or "-"
+    method = event.method or "-"
+    path = event.path or "-"
+    status_code = event.status_code if event.status_code is not None else "-"
 
     return (
         f"[EVENT] {timestamp} "
@@ -24,7 +27,10 @@ def format_event(event: Event) -> str:
         f"process={process} "
         f"service={service} "
         f"action={action} "
-        f"jail={jail}"
+        f"jail={jail} "
+        f"method={method} "
+        f"path={path} "
+        f"status={status_code}"
     )
 
 

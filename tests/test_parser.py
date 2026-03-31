@@ -1,6 +1,10 @@
 """Tests for log parsing."""
 
-from traxerax_lite.parser import parse_auth_line, parse_fail2ban_line
+from traxerax_lite.parser import (
+    parse_auth_line,
+    parse_fail2ban_line,
+    parse_nginx_access_line,
+)
 
 
 def test_parse_failed_login() -> None:
@@ -107,5 +111,49 @@ def test_parse_unsupported_fail2ban_line_returns_none() -> None:
     )
 
     event = parse_fail2ban_line(line)
+
+    assert event is None
+
+
+def test_parse_nginx_regular_request() -> None:
+    """Regular nginx access lines should parse into nginx_request."""
+    line = (
+        '203.0.113.77 - - [25/Mar/2026:10:01:00 +0000] '
+        '"GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0"'
+    )
+
+    event = parse_nginx_access_line(line)
+
+    assert event is not None
+    assert event.source == "nginx"
+    assert event.event_type == "nginx_request"
+    assert event.src_ip == "203.0.113.77"
+    assert event.method == "GET"
+    assert event.path == "/"
+    assert event.status_code == 200
+
+
+def test_parse_nginx_suspicious_request() -> None:
+    """Suspicious nginx paths should parse as nginx_suspicious_request."""
+    line = (
+        '185.10.10.1 - - [25/Mar/2026:10:00:04 +0000] '
+        '"GET /wp-login.php HTTP/1.1" 404 153 "-" "Mozilla/5.0"'
+    )
+
+    event = parse_nginx_access_line(line)
+
+    assert event is not None
+    assert event.event_type == "nginx_suspicious_request"
+    assert event.src_ip == "185.10.10.1"
+    assert event.method == "GET"
+    assert event.path == "/wp-login.php"
+    assert event.status_code == 404
+
+
+def test_parse_unsupported_nginx_line_returns_none() -> None:
+    """Unsupported nginx lines should return None."""
+    line = "not a real nginx access log line"
+
+    event = parse_nginx_access_line(line)
 
     assert event is None

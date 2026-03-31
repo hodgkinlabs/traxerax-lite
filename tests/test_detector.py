@@ -14,6 +14,9 @@ def make_event(
     service: str = "ssh",
     action: str | None = None,
     jail: str | None = None,
+    method: str | None = None,
+    path: str | None = None,
+    status_code: int | None = None,
 ) -> Event:
     """Build a minimal Event for detector tests."""
     return Event(
@@ -23,12 +26,15 @@ def make_event(
         raw="test raw line",
         username=username,
         src_ip=src_ip,
-        port=22,
+        port=22 if source == "auth" else None,
         service=service,
-        hostname="debian",
-        process="sshd" if source == "auth" else "fail2ban",
+        hostname="debian" if source == "auth" else None,
+        process="sshd" if source == "auth" else source,
         action=action,
         jail=jail,
+        method=method,
+        path=path,
+        status_code=status_code,
     )
 
 
@@ -173,3 +179,53 @@ def test_fail2ban_ban_correlation_triggers_once_per_ip() -> None:
     assert len(findings_1) == 1
     assert findings_1[0].finding_type == "ip_banned_after_auth_activity"
     assert findings_2 == []
+
+
+def test_suspicious_nginx_request_generates_finding() -> None:
+    """Suspicious nginx probe should create a finding."""
+    state = DetectionState()
+    event = make_event(
+        event_type="nginx_suspicious_request",
+        src_ip="185.10.10.1",
+        source="nginx",
+        service="nginx",
+        method="GET",
+        path="/wp-login.php",
+        status_code=404,
+    )
+
+    findings = process_event(event, state)
+
+    assert len(findings) == 1
+    assert findings[0].finding_type == "suspicious_web_probe"
+    assert findings[0].src_ip == "185.10.10.1"
+
+
+def test_suspicious_nginx_probe_triggers_once_per_ip() -> None:
+    """Suspicious web probe finding should only trigger once per IP."""
+    state = DetectionState()
+    event1 = make_event(
+        event_type="nginx_suspicious_request",
+        src_ip="185.10.10.1",
+        source="nginx",
+        service="nginx",
+        method="GET",
+        path="/wp-login.php",
+        status_code=404,
+    )
+    event2 = make_event(
+        event_type="nginx_suspicious_request",
+        src_ip="185.10.10.1",
+        source="nginx",
+        service="nginx",
+        method="GET",
+        path="/xmlrpc.php",
+        status_code=404,
+    )
+
+    findings1 = process_event(event1, state)
+    findings2 = process_event(event2, state)
+
+    assert len(findings1) == 1
+    assert findings1[0].finding_type == "suspicious_web_probe"
+    assert findings2 == []

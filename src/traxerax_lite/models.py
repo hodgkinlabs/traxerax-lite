@@ -21,6 +21,9 @@ class Event:
     process: Optional[str] = None
     action: Optional[str] = None
     jail: Optional[str] = None
+    method: Optional[str] = None
+    path: Optional[str] = None
+    status_code: Optional[int] = None
 
 
 @dataclass(slots=True)

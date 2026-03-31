@@ -120,6 +120,12 @@ def build_ip_report(
                 details.append(f"action={row['action']}")
             if row["jail"] is not None:
                 details.append(f"jail={row['jail']}")
+            if row["method"] is not None:
+                details.append(f"method={row['method']}")
+            if row["path"] is not None:
+                details.append(f"path={row['path']}")
+            if row["status_code"] is not None:
+                details.append(f"status={row['status_code']}")
 
             lines.append(
                 f"  - {row['timestamp']} | " + " ".join(details)

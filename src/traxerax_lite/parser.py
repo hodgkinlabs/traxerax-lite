@@ -32,6 +32,20 @@ FAIL2BAN_PATTERN = re.compile(
     r"(?P<ip>\S+)"
 )
 
+NGINX_ACCESS_PATTERN = re.compile(
+    r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<ts>[^\]]+)\]\s+'
+    r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+'
+    r'(?P<status>\d{3})\s+\S+'
+)
+
+SUSPICIOUS_PATHS = {
+    "/wp-login.php",
+    "/xmlrpc.php",
+    "/.env",
+    "/admin",
+    "/phpmyadmin",
+}
+
 
 def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
     """Parse a single auth log line."""
@@ -85,6 +99,40 @@ def parse_fail2ban_line(line: str) -> Optional[Event]:
         process="fail2ban",
         action=action,
         jail=match.group("jail"),
+    )
+
+
+def parse_nginx_access_line(line: str) -> Optional[Event]:
+    """Parse a single nginx access log line."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    match = NGINX_ACCESS_PATTERN.match(stripped)
+    if not match:
+        return None
+
+    timestamp = datetime.strptime(
+        match.group("ts"),
+        "%d/%b/%Y:%H:%M:%S %z",
+    )
+
+    path = match.group("path")
+    event_type = "nginx_request"
+    if path in SUSPICIOUS_PATHS:
+        event_type = "nginx_suspicious_request"
+
+    return Event(
+        timestamp=timestamp,
+        source="nginx",
+        event_type=event_type,
+        raw=stripped,
+        src_ip=match.group("ip"),
+        service="nginx",
+        process="nginx",
+        method=match.group("method"),
+        path=path,
+        status_code=int(match.group("status")),
     )
 
 
