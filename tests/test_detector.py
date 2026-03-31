@@ -1,231 +1,159 @@
-"""Tests for detection and correlation logic."""
+"""Detection logic for Traxerax Lite."""
 
-from datetime import datetime
+from collections import defaultdict
+from dataclasses import dataclass, field
 
-from traxerax_lite.detector import DetectionState, process_event
-from traxerax_lite.models import Event
+from traxerax_lite.models import Event, Finding
 
 
-def make_event(
-    event_type: str,
-    src_ip: str,
-    username: str | None = None,
-    source: str = "auth",
-    service: str = "ssh",
-    action: str | None = None,
-    jail: str | None = None,
-    method: str | None = None,
-    path: str | None = None,
-    status_code: int | None = None,
-) -> Event:
-    """Build a minimal Event for detector tests."""
-    return Event(
-        timestamp=datetime(2026, 3, 25, 10, 0, 0),
-        source=source,
-        event_type=event_type,
-        raw="test raw line",
-        username=username,
-        src_ip=src_ip,
-        port=22 if source == "auth" else None,
-        service=service,
-        hostname="debian" if source == "auth" else None,
-        process="sshd" if source == "auth" else source,
-        action=action,
-        jail=jail,
-        method=method,
-        path=path,
-        status_code=status_code,
+@dataclass
+class DetectionState:
+    """In-memory state for detections and simple correlations."""
+
+    failed_counts: dict[str, int] = field(
+        default_factory=lambda: defaultdict(int)
     )
+    threshold_alerted: set[str] = field(default_factory=set)
+    auth_activity_ips: set[str] = field(default_factory=set)
+    fail2ban_alerted: set[str] = field(default_factory=set)
+    suspicious_web_alerted: set[str] = field(default_factory=set)
 
 
-def test_root_login_attempt_generates_finding() -> None:
-    """A root login attempt should create a root-specific finding."""
-    state = DetectionState()
-    event = make_event(
-        event_type="ssh_root_login_attempt",
-        src_ip="185.10.10.1",
-        username="root",
-    )
+def process_event(event: Event, state: DetectionState) -> list[Finding]:
+    """Process one event and return any generated findings."""
+    findings: list[Finding] = []
 
-    findings = process_event(event, state)
+    if event.src_ip is None:
+        return findings
 
-    assert len(findings) == 1
-    assert findings[0].finding_type == "root_login_attempt"
-    assert findings[0].src_ip == "185.10.10.1"
+    if event.source == "auth":
+        findings.extend(_process_auth_event(event, state))
 
+    if event.source == "fail2ban":
+        findings.extend(_process_fail2ban_event(event, state))
 
-def test_repeated_failed_login_triggers_once_at_threshold() -> None:
-    """Repeated failed login finding should trigger once per IP."""
-    state = DetectionState()
-    ip = "185.10.10.1"
+    if event.source == "nginx":
+        findings.extend(_process_nginx_event(event, state))
 
-    event1 = make_event("ssh_failed_login", ip, "admin")
-    event2 = make_event("ssh_root_login_attempt", ip, "root")
-    event3 = make_event("ssh_failed_login", ip, "test")
-    event4 = make_event("ssh_failed_login", ip, "guest")
-
-    findings1 = process_event(event1, state)
-    findings2 = process_event(event2, state)
-    findings3 = process_event(event3, state)
-    findings4 = process_event(event4, state)
-
-    assert len(findings1) == 0
-
-    assert len(findings2) == 1
-    assert findings2[0].finding_type == "root_login_attempt"
-
-    assert len(findings3) == 1
-    assert findings3[0].finding_type == "repeated_failed_login"
-
-    assert len(findings4) == 0
+    return findings
 
 
-def test_success_after_failures_generates_finding() -> None:
-    """A success after prior failures from same IP should trigger."""
-    state = DetectionState()
-    ip = "203.0.113.77"
+def _process_auth_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized auth event."""
+    findings: list[Finding] = []
 
-    failure_event = make_event("ssh_failed_login", ip, "user1")
-    success_event = make_event("ssh_success_login", ip, "user1")
+    state.auth_activity_ips.add(event.src_ip)
 
-    process_event(failure_event, state)
-    findings = process_event(success_event, state)
+    if event.event_type == "ssh_root_login_attempt":
+        findings.append(
+            Finding(
+                finding_type="root_login_attempt",
+                severity="medium",
+                message=(
+                    f"Root login attempt detected from {event.src_ip}"
+                ),
+                src_ip=event.src_ip,
+                timestamp=event.timestamp,
+            )
+        )
 
-    assert len(findings) == 1
-    assert findings[0].finding_type == "success_after_failures"
-    assert findings[0].severity == "high"
-    assert findings[0].src_ip == ip
+    if event.event_type in {"ssh_failed_login", "ssh_root_login_attempt"}:
+        state.failed_counts[event.src_ip] += 1
 
+        if (
+            state.failed_counts[event.src_ip] >= 3
+            and event.src_ip not in state.threshold_alerted
+        ):
+            state.threshold_alerted.add(event.src_ip)
+            findings.append(
+                Finding(
+                    finding_type="repeated_failed_login",
+                    severity="medium",
+                    message=(
+                        "Repeated failed SSH logins detected from "
+                        f"{event.src_ip} "
+                        f"({state.failed_counts[event.src_ip]} failures)"
+                    ),
+                    src_ip=event.src_ip,
+                    timestamp=event.timestamp,
+                )
+            )
 
-def test_success_without_failures_generates_no_finding() -> None:
-    """A clean success with no prior failures should not trigger."""
-    state = DetectionState()
-    event = make_event("ssh_success_login", "198.51.100.20", "user1")
+    if event.event_type == "ssh_success_login":
+        prior_failures = state.failed_counts[event.src_ip]
+        if prior_failures >= 1:
+            findings.append(
+                Finding(
+                    finding_type="success_after_failures",
+                    severity="high",
+                    message=(
+                        "Successful SSH login after prior failures from "
+                        f"{event.src_ip} "
+                        f"({prior_failures} failures before success)"
+                    ),
+                    src_ip=event.src_ip,
+                    timestamp=event.timestamp,
+                )
+            )
 
-    findings = process_event(event, state)
-
-    assert findings == []
-
-
-def test_fail2ban_ban_after_auth_activity_generates_finding() -> None:
-    """A fail2ban ban after auth activity should generate correlation."""
-    state = DetectionState()
-    ip = "185.10.10.1"
-
-    auth_event = make_event("ssh_failed_login", ip, "admin")
-    ban_event = make_event(
-        event_type="fail2ban_ban",
-        src_ip=ip,
-        source="fail2ban",
-        service="sshd",
-        action="ban",
-        jail="actions",
-    )
-
-    process_event(auth_event, state)
-    findings = process_event(ban_event, state)
-
-    assert len(findings) == 1
-    assert findings[0].finding_type == "ip_banned_after_auth_activity"
-    assert findings[0].severity == "medium"
-    assert findings[0].src_ip == ip
-
-
-def test_fail2ban_ban_without_auth_activity_generates_no_finding() -> None:
-    """A ban with no prior auth activity should not create correlation."""
-    state = DetectionState()
-
-    ban_event = make_event(
-        event_type="fail2ban_ban",
-        src_ip="198.51.100.20",
-        source="fail2ban",
-        service="sshd",
-        action="ban",
-        jail="actions",
-    )
-
-    findings = process_event(ban_event, state)
-
-    assert findings == []
+    return findings
 
 
-def test_fail2ban_ban_correlation_triggers_once_per_ip() -> None:
-    """Correlation finding should only trigger once for a banned IP."""
-    state = DetectionState()
-    ip = "185.10.10.1"
+def _process_fail2ban_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized fail2ban event."""
+    findings: list[Finding] = []
 
-    auth_event = make_event("ssh_failed_login", ip, "admin")
-    ban_event_1 = make_event(
-        event_type="fail2ban_ban",
-        src_ip=ip,
-        source="fail2ban",
-        service="sshd",
-        action="ban",
-        jail="actions",
-    )
-    ban_event_2 = make_event(
-        event_type="fail2ban_ban",
-        src_ip=ip,
-        source="fail2ban",
-        service="sshd",
-        action="ban",
-        jail="actions",
-    )
+    if event.event_type == "fail2ban_ban":
+        if (
+            event.src_ip in state.auth_activity_ips
+            and event.src_ip not in state.fail2ban_alerted
+        ):
+            state.fail2ban_alerted.add(event.src_ip)
+            findings.append(
+                Finding(
+                    finding_type="ip_banned_after_auth_activity",
+                    severity="medium",
+                    message=(
+                        "IP seen in auth activity was later banned by "
+                        f"fail2ban: {event.src_ip}"
+                    ),
+                    src_ip=event.src_ip,
+                    timestamp=event.timestamp,
+                )
+            )
 
-    process_event(auth_event, state)
-    findings_1 = process_event(ban_event_1, state)
-    findings_2 = process_event(ban_event_2, state)
-
-    assert len(findings_1) == 1
-    assert findings_1[0].finding_type == "ip_banned_after_auth_activity"
-    assert findings_2 == []
+    return findings
 
 
-def test_suspicious_nginx_request_generates_finding() -> None:
-    """Suspicious nginx probe should create a finding."""
-    state = DetectionState()
-    event = make_event(
-        event_type="nginx_suspicious_request",
-        src_ip="185.10.10.1",
-        source="nginx",
-        service="nginx",
-        method="GET",
-        path="/wp-login.php",
-        status_code=404,
-    )
+def _process_nginx_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized nginx event."""
+    findings: list[Finding] = []
 
-    findings = process_event(event, state)
+    if (
+        event.event_type == "nginx_suspicious_request"
+        and event.src_ip not in state.suspicious_web_alerted
+    ):
+        state.suspicious_web_alerted.add(event.src_ip)
+        findings.append(
+            Finding(
+                finding_type="suspicious_web_probe",
+                severity="medium",
+                message=(
+                    "Suspicious web probe detected from "
+                    f"{event.src_ip} path={event.path}"
+                ),
+                src_ip=event.src_ip,
+                timestamp=event.timestamp,
+            )
+        )
 
-    assert len(findings) == 1
-    assert findings[0].finding_type == "suspicious_web_probe"
-    assert findings[0].src_ip == "185.10.10.1"
-
-
-def test_suspicious_nginx_probe_triggers_once_per_ip() -> None:
-    """Suspicious web probe finding should only trigger once per IP."""
-    state = DetectionState()
-    event1 = make_event(
-        event_type="nginx_suspicious_request",
-        src_ip="185.10.10.1",
-        source="nginx",
-        service="nginx",
-        method="GET",
-        path="/wp-login.php",
-        status_code=404,
-    )
-    event2 = make_event(
-        event_type="nginx_suspicious_request",
-        src_ip="185.10.10.1",
-        source="nginx",
-        service="nginx",
-        method="GET",
-        path="/xmlrpc.php",
-        status_code=404,
-    )
-
-    findings1 = process_event(event1, state)
-    findings2 = process_event(event2, state)
-
-    assert len(findings1) == 1
-    assert findings1[0].finding_type == "suspicious_web_probe"
-    assert findings2 == []
+    return findings

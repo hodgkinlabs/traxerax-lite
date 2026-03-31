@@ -5,14 +5,6 @@ from dataclasses import dataclass, field
 
 from traxerax_lite.models import Event, Finding
 
-SUSPICIOUS_PATHS = {
-    "/wp-login.php",
-    "/xmlrpc.php",
-    "/.env",
-    "/admin",
-    "/phpmyadmin",
-}
-
 
 @dataclass
 class DetectionState:
@@ -148,7 +140,6 @@ def _process_nginx_event(
 
     if (
         event.event_type == "nginx_suspicious_request"
-        and event.path in SUSPICIOUS_PATHS
         and event.src_ip not in state.suspicious_web_alerted
     ):
         state.suspicious_web_alerted.add(event.src_ip)
