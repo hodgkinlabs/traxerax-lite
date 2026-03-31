@@ -69,3 +69,61 @@ def get_top_finding_source_ips(
         (limit,),
     )
     return cursor.fetchall()
+
+
+def get_ips_seen_in_auth_and_fail2ban(
+    connection: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Return IPs present in both auth and fail2ban event sources."""
+    cursor = connection.execute(
+        """
+        SELECT e.src_ip
+        FROM events AS e
+        WHERE e.src_ip IS NOT NULL
+        GROUP BY e.src_ip
+        HAVING
+            SUM(CASE WHEN e.source = 'auth' THEN 1 ELSE 0 END) > 0
+            AND
+            SUM(CASE WHEN e.source = 'fail2ban' THEN 1 ELSE 0 END) > 0
+        ORDER BY e.src_ip ASC
+        """
+    )
+    return cursor.fetchall()
+
+
+def get_ips_with_root_attempt_and_ban(
+    connection: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Return IPs that attempted root login and were later banned."""
+    cursor = connection.execute(
+        """
+        SELECT DISTINCT root_events.src_ip
+        FROM events AS root_events
+        JOIN events AS ban_events
+            ON root_events.src_ip = ban_events.src_ip
+        WHERE root_events.event_type = 'ssh_root_login_attempt'
+          AND ban_events.event_type = 'fail2ban_ban'
+          AND root_events.src_ip IS NOT NULL
+        ORDER BY root_events.src_ip ASC
+        """
+    )
+    return cursor.fetchall()
+
+
+def get_top_ips_by_finding_count(
+    connection: sqlite3.Connection,
+    limit: int = 5,
+) -> list[sqlite3.Row]:
+    """Return IPs ranked by total finding count."""
+    cursor = connection.execute(
+        """
+        SELECT src_ip, COUNT(*) AS count
+        FROM findings
+        WHERE src_ip IS NOT NULL
+        GROUP BY src_ip
+        ORDER BY count DESC, src_ip ASC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return cursor.fetchall()

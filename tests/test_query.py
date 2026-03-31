@@ -6,8 +6,11 @@ from traxerax_lite.models import Event, Finding
 from traxerax_lite.query import (
     get_event_counts_by_type,
     get_finding_counts_by_type,
+    get_ips_seen_in_auth_and_fail2ban,
+    get_ips_with_root_attempt_and_ban,
     get_top_event_source_ips,
     get_top_finding_source_ips,
+    get_top_ips_by_finding_count,
 )
 from traxerax_lite.storage import (
     get_connection,
@@ -220,6 +223,158 @@ def test_get_top_finding_source_ips_returns_ranked_ips() -> None:
     )
 
     rows = get_top_finding_source_ips(connection)
+
+    assert rows[0]["src_ip"] == "185.10.10.1"
+    assert rows[0]["count"] == 2
+    assert rows[1]["src_ip"] == "203.0.113.77"
+    assert rows[1]["count"] == 1
+
+    connection.close()
+
+
+def test_get_ips_seen_in_auth_and_fail2ban_returns_overlap() -> None:
+    """Cross-source query should return IPs present in both sources."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="auth-1",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 2),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="f2b-1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 3),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="auth-2",
+            src_ip="203.0.113.77",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+
+    rows = get_ips_seen_in_auth_and_fail2ban(connection)
+
+    assert len(rows) == 1
+    assert rows[0]["src_ip"] == "185.10.10.1"
+
+    connection.close()
+
+
+def test_get_ips_with_root_attempt_and_ban_returns_matching_ips() -> None:
+    """Query should return IPs with root attempts and fail2ban bans."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="auth",
+            event_type="ssh_root_login_attempt",
+            raw="root-attempt",
+            src_ip="185.10.10.1",
+            username="root",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 2),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban-event",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 3),
+            source="auth",
+            event_type="ssh_root_login_attempt",
+            raw="other-root-attempt",
+            src_ip="203.0.113.77",
+            username="root",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+
+    rows = get_ips_with_root_attempt_and_ban(connection)
+
+    assert len(rows) == 1
+    assert rows[0]["src_ip"] == "185.10.10.1"
+
+    connection.close()
+
+
+def test_get_top_ips_by_finding_count_returns_ranked_ips() -> None:
+    """Query should rank IPs by number of findings."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="root_login_attempt",
+            severity="medium",
+            message="Root login attempt 1",
+            src_ip="185.10.10.1",
+            timestamp=datetime(2026, 3, 25, 10, 0, 5),
+        ),
+    )
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="repeated_failed_login",
+            severity="medium",
+            message="Repeated failures",
+            src_ip="185.10.10.1",
+            timestamp=datetime(2026, 3, 25, 10, 0, 6),
+        ),
+    )
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="success_after_failures",
+            severity="high",
+            message="Success after failures",
+            src_ip="203.0.113.77",
+            timestamp=datetime(2026, 3, 25, 10, 1, 20),
+        ),
+    )
+
+    rows = get_top_ips_by_finding_count(connection)
 
     assert rows[0]["src_ip"] == "185.10.10.1"
     assert rows[0]["count"] == 2
