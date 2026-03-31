@@ -40,7 +40,10 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             hostname TEXT,
             process TEXT,
             action TEXT,
-            jail TEXT
+            jail TEXT,
+            method TEXT,
+            path TEXT,
+            status_code INTEGER
         )
         """
     )
@@ -78,6 +81,9 @@ def make_event_hash(event: Event) -> str:
             str(event.process),
             str(event.action),
             str(event.jail),
+            str(event.method),
+            str(event.path),
+            str(event.status_code),
         ]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -116,9 +122,12 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             hostname,
             process,
             action,
-            jail
+            jail,
+            method,
+            path,
+            status_code
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_hash,
@@ -134,6 +143,9 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             event.process,
             event.action,
             event.jail,
+            event.method,
+            event.path,
+            event.status_code,
         ),
     )
     connection.commit()

@@ -147,6 +147,9 @@ def get_events_for_ip(
             process,
             action,
             jail,
+            method,
+            path,
+            status_code,
             raw
         FROM events
         WHERE src_ip = ?

@@ -5,6 +5,14 @@ from dataclasses import dataclass, field
 
 from traxerax_lite.models import Event, Finding
 
+SUSPICIOUS_PATHS = {
+    "/wp-login.php",
+    "/xmlrpc.php",
+    "/.env",
+    "/admin",
+    "/phpmyadmin",
+}
+
 
 @dataclass
 class DetectionState:
@@ -16,6 +24,7 @@ class DetectionState:
     threshold_alerted: set[str] = field(default_factory=set)
     auth_activity_ips: set[str] = field(default_factory=set)
     fail2ban_alerted: set[str] = field(default_factory=set)
+    suspicious_web_alerted: set[str] = field(default_factory=set)
 
 
 def process_event(event: Event, state: DetectionState) -> list[Finding]:
@@ -30,6 +39,9 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
 
     if event.source == "fail2ban":
         findings.extend(_process_fail2ban_event(event, state))
+
+    if event.source == "nginx":
+        findings.extend(_process_nginx_event(event, state))
 
     return findings
 
@@ -123,5 +135,34 @@ def _process_fail2ban_event(
                     timestamp=event.timestamp,
                 )
             )
+
+    return findings
+
+
+def _process_nginx_event(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process a normalized nginx event."""
+    findings: list[Finding] = []
+
+    if (
+        event.event_type == "nginx_suspicious_request"
+        and event.path in SUSPICIOUS_PATHS
+        and event.src_ip not in state.suspicious_web_alerted
+    ):
+        state.suspicious_web_alerted.add(event.src_ip)
+        findings.append(
+            Finding(
+                finding_type="suspicious_web_probe",
+                severity="medium",
+                message=(
+                    "Suspicious web probe detected from "
+                    f"{event.src_ip} path={event.path}"
+                ),
+                src_ip=event.src_ip,
+                timestamp=event.timestamp,
+            )
+        )
 
     return findings

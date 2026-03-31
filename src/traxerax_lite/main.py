@@ -3,7 +3,11 @@
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.detector import DetectionState, process_event
-from traxerax_lite.parser import parse_auth_line, parse_fail2ban_line
+from traxerax_lite.parser import (
+    parse_auth_line,
+    parse_fail2ban_line,
+    parse_nginx_access_line,
+)
 from traxerax_lite.report_queries import build_ip_report, build_summary_report
 from traxerax_lite.reporter import format_event, format_finding
 from traxerax_lite.storage import (
@@ -34,10 +38,10 @@ def main() -> None:
                 print(build_ip_report(connection, args.ip))
                 return
 
-        if not args.auth_log and not args.fail2ban_log:
+        if not args.auth_log and not args.fail2ban_log and not args.nginx_log:
             parser.error(
                 "at least one log source must be provided: "
-                "--auth-log or --fail2ban-log, or use --report"
+                "--auth-log, --fail2ban-log, --nginx-log, or use --report"
             )
 
         state = DetectionState()
@@ -63,6 +67,22 @@ def main() -> None:
         if args.fail2ban_log:
             for line in read_lines(args.fail2ban_log):
                 event = parse_fail2ban_line(line)
+                if event is None:
+                    continue
+
+                parsed_count += 1
+                print(format_event(event))
+                insert_event(connection, event)
+
+                findings = process_event(event, state)
+                for finding in findings:
+                    finding_count += 1
+                    print(format_finding(finding))
+                    insert_finding(connection, finding)
+
+        if args.nginx_log:
+            for line in read_lines(args.nginx_log):
+                event = parse_nginx_access_line(line)
                 if event is None:
                     continue
 

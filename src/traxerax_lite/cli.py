@@ -20,6 +20,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--nginx-log",
+        help="Path to nginx access log file",
+    )
+
+    parser.add_argument(
         "--year",
         type=int,
         default=None,
