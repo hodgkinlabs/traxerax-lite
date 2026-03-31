@@ -1,5 +1,6 @@
 """SQLite storage for Traxerax Lite."""
 
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -27,6 +28,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_hash TEXT NOT NULL UNIQUE,
             timestamp TEXT NOT NULL,
             source TEXT NOT NULL,
             event_type TEXT NOT NULL,
@@ -47,6 +49,7 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         """
         CREATE TABLE IF NOT EXISTS findings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            finding_hash TEXT NOT NULL UNIQUE,
             timestamp TEXT NOT NULL,
             finding_type TEXT NOT NULL,
             severity TEXT NOT NULL,
@@ -59,11 +62,49 @@ def initialize_database(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def make_event_hash(event: Event) -> str:
+    """Return a deterministic hash for an event."""
+    payload = "|".join(
+        [
+            event.timestamp.isoformat(sep=" "),
+            event.source,
+            event.event_type,
+            event.raw,
+            str(event.username),
+            str(event.src_ip),
+            str(event.port),
+            str(event.service),
+            str(event.hostname),
+            str(event.process),
+            str(event.action),
+            str(event.jail),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def make_finding_hash(finding: Finding) -> str:
+    """Return a deterministic hash for a finding."""
+    payload = "|".join(
+        [
+            finding.timestamp.isoformat(sep=" "),
+            finding.finding_type,
+            finding.severity,
+            finding.message,
+            str(finding.src_ip),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def insert_event(connection: sqlite3.Connection, event: Event) -> None:
-    """Insert a normalized event into the database."""
+    """Insert a normalized event into the database, ignoring duplicates."""
+    event_hash = make_event_hash(event)
+
     connection.execute(
         """
-        INSERT INTO events (
+        INSERT OR IGNORE INTO events (
+            event_hash,
             timestamp,
             source,
             event_type,
@@ -77,9 +118,10 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             action,
             jail
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
+            event_hash,
             event.timestamp.isoformat(sep=" "),
             event.source,
             event.event_type,
@@ -98,19 +140,23 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
 
 
 def insert_finding(connection: sqlite3.Connection, finding: Finding) -> None:
-    """Insert a detection finding into the database."""
+    """Insert a detection finding into the database, ignoring duplicates."""
+    finding_hash = make_finding_hash(finding)
+
     connection.execute(
         """
-        INSERT INTO findings (
+        INSERT OR IGNORE INTO findings (
+            finding_hash,
             timestamp,
             finding_type,
             severity,
             message,
             src_ip
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
+            finding_hash,
             finding.timestamp.isoformat(sep=" "),
             finding.finding_type,
             finding.severity,
