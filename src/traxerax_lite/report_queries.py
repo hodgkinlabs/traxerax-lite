@@ -3,10 +3,15 @@
 import sqlite3
 
 from traxerax_lite.query import (
+    get_event_counts_by_source_for_ip,
     get_event_counts_by_type,
-    get_finding_counts_by_type,
+    get_event_counts_by_type_for_ip,
     get_events_for_ip,
+    get_finding_counts_by_type,
+    get_finding_counts_by_type_for_ip,
     get_findings_for_ip,
+    get_ip_overview,
+    get_ip_total_findings,
     get_ips_seen_in_auth_and_fail2ban,
     get_ips_with_root_attempt_and_ban,
     get_top_event_source_ips,
@@ -92,6 +97,11 @@ def build_ip_report(
     src_ip: str,
 ) -> str:
     """Build a timeline-style report for a single IP address."""
+    overview = get_ip_overview(connection, src_ip)
+    total_findings = get_ip_total_findings(connection, src_ip)
+    source_counts = get_event_counts_by_source_for_ip(connection, src_ip)
+    event_type_counts = get_event_counts_by_type_for_ip(connection, src_ip)
+    finding_type_counts = get_finding_counts_by_type_for_ip(connection, src_ip)
     events = get_events_for_ip(connection, src_ip)
     findings = get_findings_for_ip(connection, src_ip)
 
@@ -99,6 +109,40 @@ def build_ip_report(
     lines.append(f"[REPORT] ip={src_ip}")
     lines.append("")
 
+    lines.append("overview:")
+    if overview is not None:
+        lines.append(f"  - first_seen: {overview['first_seen']}")
+        lines.append(f"  - last_seen: {overview['last_seen']}")
+        lines.append(f"  - total_events: {overview['total_events']}")
+        lines.append(f"  - total_findings: {total_findings}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("event_counts_by_source:")
+    if source_counts:
+        for row in source_counts:
+            lines.append(f"  - {row['source']}: {row['count']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("event_counts_by_type:")
+    if event_type_counts:
+        for row in event_type_counts:
+            lines.append(f"  - {row['event_type']}: {row['count']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("finding_counts_by_type:")
+    if finding_type_counts:
+        for row in finding_type_counts:
+            lines.append(f"  - {row['finding_type']}: {row['count']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
     lines.append("timeline:")
     if events:
         for row in events:
@@ -127,9 +171,7 @@ def build_ip_report(
             if row["status_code"] is not None:
                 details.append(f"status={row['status_code']}")
 
-            lines.append(
-                f"  - {row['timestamp']} | " + " ".join(details)
-            )
+            lines.append(f"  - {row['timestamp']} | " + " ".join(details))
     else:
         lines.append("  - none")
 
