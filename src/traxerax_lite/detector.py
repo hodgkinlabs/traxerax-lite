@@ -15,8 +15,14 @@ class DetectionState:
     )
     threshold_alerted: set[str] = field(default_factory=set)
     auth_activity_ips: set[str] = field(default_factory=set)
-    fail2ban_alerted: set[str] = field(default_factory=set)
+    fail2ban_banned_ips: set[str] = field(default_factory=set)
+
     suspicious_web_alerted: set[str] = field(default_factory=set)
+    web_probe_ips: set[str] = field(default_factory=set)
+
+    web_to_auth_alerted: set[str] = field(default_factory=set)
+    web_to_ban_alerted: set[str] = field(default_factory=set)
+    multi_source_alerted: set[str] = field(default_factory=set)
 
 
 def process_event(event: Event, state: DetectionState) -> list[Finding]:
@@ -35,6 +41,7 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
     if event.source == "nginx":
         findings.extend(_process_nginx_event(event, state))
 
+    findings.extend(_check_cross_source_correlations(event, state))
     return findings
 
 
@@ -110,11 +117,9 @@ def _process_fail2ban_event(
     findings: list[Finding] = []
 
     if event.event_type == "fail2ban_ban":
-        if (
-            event.src_ip in state.auth_activity_ips
-            and event.src_ip not in state.fail2ban_alerted
-        ):
-            state.fail2ban_alerted.add(event.src_ip)
+        state.fail2ban_banned_ips.add(event.src_ip)
+
+        if event.src_ip in state.auth_activity_ips:
             findings.append(
                 Finding(
                     finding_type="ip_banned_after_auth_activity",
@@ -138,22 +143,85 @@ def _process_nginx_event(
     """Process a normalized nginx event."""
     findings: list[Finding] = []
 
-    if (
-        event.event_type == "nginx_suspicious_request"
-        and event.src_ip not in state.suspicious_web_alerted
-    ):
-        state.suspicious_web_alerted.add(event.src_ip)
-        findings.append(
-            Finding(
-                finding_type="suspicious_web_probe",
-                severity="medium",
-                message=(
-                    "Suspicious web probe detected from "
-                    f"{event.src_ip} path={event.path}"
-                ),
-                src_ip=event.src_ip,
-                timestamp=event.timestamp,
+    if event.event_type == "nginx_suspicious_request":
+        state.web_probe_ips.add(event.src_ip)
+
+        if event.src_ip not in state.suspicious_web_alerted:
+            state.suspicious_web_alerted.add(event.src_ip)
+            findings.append(
+                Finding(
+                    finding_type="suspicious_web_probe",
+                    severity="medium",
+                    message=(
+                        "Suspicious web probe detected from "
+                        f"{event.src_ip} path={event.path}"
+                    ),
+                    src_ip=event.src_ip,
+                    timestamp=event.timestamp,
+                )
             )
-        )
+
+    return findings
+
+
+def _check_cross_source_correlations(
+    event: Event,
+    state: DetectionState,
+) -> list[Finding]:
+    """Generate higher-level findings from multi-source activity."""
+    findings: list[Finding] = []
+    ip = event.src_ip
+
+    if ip in state.web_probe_ips and ip in state.auth_activity_ips:
+        if ip not in state.web_to_auth_alerted:
+            state.web_to_auth_alerted.add(ip)
+            findings.append(
+                Finding(
+                    finding_type="web_probe_followed_by_auth_activity",
+                    severity="medium",
+                    message=(
+                        "IP performed suspicious web probing and also "
+                        f"showed auth activity: {ip}"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+            )
+
+    if ip in state.web_probe_ips and ip in state.fail2ban_banned_ips:
+        if ip not in state.web_to_ban_alerted:
+            state.web_to_ban_alerted.add(ip)
+            findings.append(
+                Finding(
+                    finding_type="web_probe_followed_by_fail2ban_ban",
+                    severity="medium",
+                    message=(
+                        "IP performed suspicious web probing and was later "
+                        f"banned by fail2ban: {ip}"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+            )
+
+    if (
+        ip in state.web_probe_ips
+        and ip in state.auth_activity_ips
+        and ip in state.fail2ban_banned_ips
+    ):
+        if ip not in state.multi_source_alerted:
+            state.multi_source_alerted.add(ip)
+            findings.append(
+                Finding(
+                    finding_type="multi_source_ip_activity",
+                    severity="high",
+                    message=(
+                        "IP appeared across nginx, auth, and fail2ban: "
+                        f"{ip}"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+            )
 
     return findings
