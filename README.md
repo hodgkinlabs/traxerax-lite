@@ -40,7 +40,16 @@ Traxerax-lite currently supports:
   - ban events
   - unban events
 
-Both sources are normalized into a shared `Event` model.
+- **nginx access logs**
+  - regular requests
+  - suspicious requests based on configured paths
+
+- **mail authentication logs**
+  - Dovecot failed logins
+  - Dovecot successful logins
+  - Postfix SASL authentication failures
+
+All supported sources are normalized into a shared `Event` model.
 
 ---
 
@@ -49,18 +58,37 @@ Both sources are normalized into a shared `Event` model.
 The current detection engine supports:
 
 - **Root Login Attempt**
-  - any failed authentication attempt targeting `root`
+  - failed authentication attempt targeting `root`
 
 - **Repeated Failed Logins**
-  - threshold-based detection (default: 3 failures per IP)
-  - emitted once per IP to reduce noise
+  - threshold-based SSH failed login detection
 
 - **Success After Failures**
-  - successful SSH login following prior failures from the same IP
+  - successful SSH login following prior failed attempts from the same IP
+
+- **Suspicious Web Probe**
+  - nginx request to configured suspicious paths
+
+- **Repeated Mail Auth Failures**
+  - repeated Dovecot/Postfix authentication failures from the same IP
+
+- **Mail Success After Failures**
+  - successful mail login after prior mail auth failures
 
 - **IP Banned After Auth Activity**
-  - correlation finding triggered when an IP observed in auth activity is later
-    banned by fail2ban during the same run
+  - fail2ban ban following prior SSH/auth activity from the same IP
+
+- **IP Banned After Mail Activity**
+  - fail2ban ban following prior mail auth activity from the same IP
+
+- **Web Probe Followed by Auth Activity**
+  - suspicious nginx activity plus SSH/auth activity from the same IP
+
+- **Web Probe Followed by fail2ban Ban**
+  - suspicious nginx activity plus later fail2ban ban from the same IP
+
+- **Multi-Source IP Activity**
+  - IP observed across nginx, auth, and fail2ban during the same run
 
 All logic is deterministic and testable.
 
