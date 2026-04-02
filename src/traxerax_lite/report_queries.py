@@ -11,9 +11,15 @@ from traxerax_lite.query import (
     get_finding_counts_by_type_for_ip,
     get_findings_for_ip,
     get_ip_overview,
+    get_ip_persistence_stats,
+    get_ip_post_ban_activity_count,
     get_ip_total_findings,
     get_ips_seen_in_auth_and_fail2ban,
     get_ips_with_root_attempt_and_ban,
+    get_persistent_multi_source_ips,
+    get_repeat_banned_ips,
+    get_returned_after_ban_ips,
+    get_root_attempt_ips_with_repeat_activity,
     get_top_event_source_ips,
     get_top_finding_source_ips,
     get_top_ips_by_finding_count,
@@ -29,6 +35,11 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     cross_source_ips = get_ips_seen_in_auth_and_fail2ban(connection)
     root_then_ban_ips = get_ips_with_root_attempt_and_ban(connection)
     top_ips_by_finding_count = get_top_ips_by_finding_count(connection)
+
+    repeat_banned_ips = get_repeat_banned_ips(connection)
+    returned_after_ban_ips = get_returned_after_ban_ips(connection)
+    persistent_multi_source_ips = get_persistent_multi_source_ips(connection)
+    root_attempt_repeat_ips = get_root_attempt_ips_with_repeat_activity(connection)
 
     lines: list[str] = []
     lines.append("[REPORT] summary")
@@ -89,6 +100,46 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     else:
         lines.append("  - none")
 
+    lines.append("")
+    lines.append("repeat_banned_ips:")
+    if repeat_banned_ips:
+        for row in repeat_banned_ips:
+            lines.append(f"  - {row['src_ip']}: {row['ban_count']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("returned_after_ban_ips:")
+    if returned_after_ban_ips:
+        for row in returned_after_ban_ips:
+            lines.append(f"  - {row['src_ip']}: {row['post_ban_events']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("persistent_multi_source_ips:")
+    if persistent_multi_source_ips:
+        for row in persistent_multi_source_ips:
+            lines.append(
+                f"  - {row['src_ip']}: "
+                f"events={row['total_events']} "
+                f"sources={row['source_count']}"
+            )
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("root_attempt_ips_with_repeat_activity:")
+    if root_attempt_repeat_ips:
+        for row in root_attempt_repeat_ips:
+            lines.append(
+                f"  - {row['src_ip']}: "
+                f"auth_events={row['auth_event_count']} "
+                f"root_attempts={row['root_attempt_count']}"
+            )
+    else:
+        lines.append("  - none")
+
     return "\n".join(lines)
 
 
@@ -102,6 +153,9 @@ def build_ip_report(
     source_counts = get_event_counts_by_source_for_ip(connection, src_ip)
     event_type_counts = get_event_counts_by_type_for_ip(connection, src_ip)
     finding_type_counts = get_finding_counts_by_type_for_ip(connection, src_ip)
+    persistence_stats = get_ip_persistence_stats(connection, src_ip)
+    post_ban_activity_count = get_ip_post_ban_activity_count(connection, src_ip)
+
     events = get_events_for_ip(connection, src_ip)
     findings = get_findings_for_ip(connection, src_ip)
 
@@ -115,6 +169,48 @@ def build_ip_report(
         lines.append(f"  - last_seen: {overview['last_seen']}")
         lines.append(f"  - total_events: {overview['total_events']}")
         lines.append(f"  - total_findings: {total_findings}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("persistence_flags:")
+    if persistence_stats is not None:
+        repeat_banned = persistence_stats["ban_count"] >= 2
+        returned_after_ban = post_ban_activity_count >= 1
+        persistent_multi_source = (
+            persistence_stats["source_count"] >= 2
+            and persistence_stats["total_events"] >= 4
+        )
+        root_attempt_from_repeat_ip = (
+            persistence_stats["root_attempt_count"] >= 1
+            and persistence_stats["auth_event_count"] >= 3
+        )
+
+        lines.append(f"  - source_count: {persistence_stats['source_count']}")
+        lines.append(f"  - ban_count: {persistence_stats['ban_count']}")
+        lines.append(
+            f"  - root_attempt_count: "
+            f"{persistence_stats['root_attempt_count']}"
+        )
+        lines.append(
+            f"  - auth_event_count: {persistence_stats['auth_event_count']}"
+        )
+        lines.append(
+            f"  - post_ban_activity_events: {post_ban_activity_count}"
+        )
+        lines.append(f"  - repeat_banned: {'yes' if repeat_banned else 'no'}")
+        lines.append(
+            f"  - returned_after_ban: "
+            f"{'yes' if returned_after_ban else 'no'}"
+        )
+        lines.append(
+            f"  - persistent_multi_source: "
+            f"{'yes' if persistent_multi_source else 'no'}"
+        )
+        lines.append(
+            f"  - root_attempt_from_repeat_ip: "
+            f"{'yes' if root_attempt_from_repeat_ip else 'no'}"
+        )
     else:
         lines.append("  - none")
 

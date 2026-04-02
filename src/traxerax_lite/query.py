@@ -129,6 +129,102 @@ def get_top_ips_by_finding_count(
     return cursor.fetchall()
 
 
+def get_repeat_banned_ips(
+    connection: sqlite3.Connection,
+    min_bans: int = 2,
+) -> list[sqlite3.Row]:
+    """Return IPs that have been banned multiple times."""
+    cursor = connection.execute(
+        """
+        SELECT src_ip, COUNT(*) AS ban_count
+        FROM events
+        WHERE event_type = 'fail2ban_ban'
+          AND src_ip IS NOT NULL
+        GROUP BY src_ip
+        HAVING COUNT(*) >= ?
+        ORDER BY ban_count DESC, src_ip ASC
+        """,
+        (min_bans,),
+    )
+    return cursor.fetchall()
+
+
+def get_returned_after_ban_ips(
+    connection: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Return IPs that showed auth/nginx activity after a prior ban."""
+    cursor = connection.execute(
+        """
+        WITH first_ban AS (
+            SELECT src_ip, MIN(timestamp) AS first_ban_time
+            FROM events
+            WHERE event_type = 'fail2ban_ban'
+              AND src_ip IS NOT NULL
+            GROUP BY src_ip
+        )
+        SELECT e.src_ip, COUNT(*) AS post_ban_events
+        FROM events AS e
+        JOIN first_ban AS b
+            ON e.src_ip = b.src_ip
+        WHERE e.timestamp > b.first_ban_time
+          AND e.source IN ('auth', 'nginx')
+        GROUP BY e.src_ip
+        ORDER BY post_ban_events DESC, e.src_ip ASC
+        """
+    )
+    return cursor.fetchall()
+
+
+def get_persistent_multi_source_ips(
+    connection: sqlite3.Connection,
+    min_total_events: int = 4,
+) -> list[sqlite3.Row]:
+    """Return IPs with sustained activity across multiple sources."""
+    cursor = connection.execute(
+        """
+        SELECT
+            src_ip,
+            COUNT(DISTINCT source) AS source_count,
+            COUNT(*) AS total_events
+        FROM events
+        WHERE src_ip IS NOT NULL
+        GROUP BY src_ip
+        HAVING COUNT(DISTINCT source) >= 2
+           AND COUNT(*) >= ?
+        ORDER BY total_events DESC, src_ip ASC
+        """,
+        (min_total_events,),
+    )
+    return cursor.fetchall()
+
+
+def get_root_attempt_ips_with_repeat_activity(
+    connection: sqlite3.Connection,
+    min_auth_events: int = 3,
+) -> list[sqlite3.Row]:
+    """Return IPs with root attempts and repeated auth activity."""
+    cursor = connection.execute(
+        """
+        SELECT
+            src_ip,
+            COUNT(*) AS auth_event_count,
+            SUM(
+                CASE WHEN event_type = 'ssh_root_login_attempt'
+                     THEN 1 ELSE 0 END
+            ) AS root_attempt_count
+        FROM events
+        WHERE src_ip IS NOT NULL
+          AND source = 'auth'
+        GROUP BY src_ip
+        HAVING root_attempt_count > 0
+           AND auth_event_count >= ?
+        ORDER BY auth_event_count DESC, src_ip ASC
+        """,
+        (min_auth_events,),
+    )
+    return cursor.fetchall()
+
+
 def get_events_for_ip(
     connection: sqlite3.Connection,
     src_ip: str,
@@ -272,3 +368,61 @@ def get_finding_counts_by_type_for_ip(
         (src_ip,),
     )
     return cursor.fetchall()
+
+
+def get_ip_persistence_stats(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> sqlite3.Row | None:
+    """Return persistence-oriented aggregate stats for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            COUNT(*) AS total_events,
+            COUNT(DISTINCT source) AS source_count,
+            SUM(
+                CASE WHEN event_type = 'fail2ban_ban'
+                     THEN 1 ELSE 0 END
+            ) AS ban_count,
+            SUM(
+                CASE WHEN event_type = 'ssh_root_login_attempt'
+                     THEN 1 ELSE 0 END
+            ) AS root_attempt_count,
+            SUM(
+                CASE WHEN source = 'auth'
+                     THEN 1 ELSE 0 END
+            ) AS auth_event_count
+        FROM events
+        WHERE src_ip = ?
+        """,
+        (src_ip,),
+    )
+    row = cursor.fetchone()
+    if row is None or row["total_events"] == 0:
+        return None
+    return row
+
+
+def get_ip_post_ban_activity_count(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> int:
+    """Return count of auth/nginx events after the first ban for an IP."""
+    cursor = connection.execute(
+        """
+        WITH first_ban AS (
+            SELECT MIN(timestamp) AS first_ban_time
+            FROM events
+            WHERE src_ip = ?
+              AND event_type = 'fail2ban_ban'
+        )
+        SELECT COUNT(*) AS count
+        FROM events
+        WHERE src_ip = ?
+          AND source IN ('auth', 'nginx')
+          AND timestamp > (SELECT first_ban_time FROM first_ban)
+        """,
+        (src_ip, src_ip),
+    )
+    row = cursor.fetchone()
+    return 0 if row is None else row["count"]
