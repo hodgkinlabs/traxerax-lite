@@ -179,3 +179,96 @@ def get_findings_for_ip(
         (src_ip,),
     )
     return cursor.fetchall()
+
+
+def get_ip_overview(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> sqlite3.Row | None:
+    """Return first seen, last seen, and total event count for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            MIN(timestamp) AS first_seen,
+            MAX(timestamp) AS last_seen,
+            COUNT(*) AS total_events
+        FROM events
+        WHERE src_ip = ?
+        """,
+        (src_ip,),
+    )
+    row = cursor.fetchone()
+    if row is None or row["total_events"] == 0:
+        return None
+    return row
+
+
+def get_ip_total_findings(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> int:
+    """Return total finding count for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM findings
+        WHERE src_ip = ?
+        """,
+        (src_ip,),
+    )
+    row = cursor.fetchone()
+    return 0 if row is None else row["count"]
+
+
+def get_event_counts_by_source_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return event counts grouped by source for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT source, COUNT(*) AS count
+        FROM events
+        WHERE src_ip = ?
+        GROUP BY source
+        ORDER BY count DESC, source ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
+def get_event_counts_by_type_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return event counts grouped by event_type for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT event_type, COUNT(*) AS count
+        FROM events
+        WHERE src_ip = ?
+        GROUP BY event_type
+        ORDER BY count DESC, event_type ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
+def get_finding_counts_by_type_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return finding counts grouped by finding_type for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT finding_type, COUNT(*) AS count
+        FROM findings
+        WHERE src_ip = ?
+        GROUP BY finding_type
+        ORDER BY count DESC, finding_type ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
