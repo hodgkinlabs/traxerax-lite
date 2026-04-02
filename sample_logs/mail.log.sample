@@ -1,0 +1,4 @@
+Mar 25 10:11:40 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 2 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<abc123>
+Mar 25 10:11:50 debian submission/smtpd[3101]: warning: unknown[198.51.100.20]: SASL LOGIN authentication failed: authentication failure
+Mar 25 10:12:00 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<def456>
+Mar 25 10:30:00 debian dovecot: imap-login: Login: user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, mpid=4201, TLS, session=<ghi789>
