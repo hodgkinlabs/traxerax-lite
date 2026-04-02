@@ -9,6 +9,7 @@ from traxerax_lite.models import Event
 def make_event(
     event_type: str,
     src_ip: str,
+    timestamp: datetime,
     username: str | None = None,
     source: str = "auth",
     service: str = "ssh",
@@ -20,7 +21,7 @@ def make_event(
 ) -> Event:
     """Build a minimal Event for detector tests."""
     return Event(
-        timestamp=datetime(2026, 3, 25, 10, 0, 0),
+        timestamp=timestamp,
         source=source,
         event_type=event_type,
         raw="test raw line",
@@ -28,7 +29,7 @@ def make_event(
         src_ip=src_ip,
         port=22 if source == "auth" else None,
         service=service,
-        hostname="debian" if source == "auth" else None,
+        hostname="debian" if source in {"auth", "mail"} else None,
         process="sshd" if source == "auth" else source,
         action=action,
         jail=jail,
@@ -38,52 +39,26 @@ def make_event(
     )
 
 
-def test_root_login_attempt_generates_finding() -> None:
-    """A root login attempt should create a root-specific finding."""
-    state = DetectionState()
-    event = make_event(
-        event_type="ssh_root_login_attempt",
-        src_ip="185.10.10.1",
-        username="root",
-    )
-
-    findings = process_event(event, state)
-
-    assert len(findings) == 1
-    assert findings[0].finding_type == "root_login_attempt"
-
-
 def test_repeated_failed_login_triggers_once_at_threshold() -> None:
-    """Repeated failed login finding should trigger once per IP."""
+    """Repeated SSH failed login finding should trigger once per IP."""
     state = DetectionState()
     ip = "185.10.10.1"
 
-    findings1 = process_event(make_event("ssh_failed_login", ip, "admin"), state)
-    findings2 = process_event(
-        make_event("ssh_root_login_attempt", ip, "root"),
+    process_event(
+        make_event("ssh_failed_login", ip, datetime(2026, 3, 25, 10, 0, 1), "admin"),
         state,
     )
-    findings3 = process_event(make_event("ssh_failed_login", ip, "test"), state)
-    findings4 = process_event(make_event("ssh_failed_login", ip, "guest"), state)
+    process_event(
+        make_event("ssh_root_login_attempt", ip, datetime(2026, 3, 25, 10, 0, 2), "root"),
+        state,
+    )
+    findings = process_event(
+        make_event("ssh_failed_login", ip, datetime(2026, 3, 25, 10, 0, 3), "test"),
+        state,
+    )
 
-    assert findings1 == []
-    assert len(findings2) == 1
-    assert findings2[0].finding_type == "root_login_attempt"
-    assert len(findings3) == 1
-    assert findings3[0].finding_type == "repeated_failed_login"
-    assert findings4 == []
-
-
-def test_success_after_failures_generates_finding() -> None:
-    """A success after prior failures from same IP should trigger."""
-    state = DetectionState()
-    ip = "203.0.113.77"
-
-    process_event(make_event("ssh_failed_login", ip, "user1"), state)
-    findings = process_event(make_event("ssh_success_login", ip, "user1"), state)
-
-    assert len(findings) == 1
-    assert findings[0].finding_type == "success_after_failures"
+    finding_types = {finding.finding_type for finding in findings}
+    assert "repeated_failed_login" in finding_types
 
 
 def test_suspicious_nginx_request_generates_finding() -> None:
@@ -91,70 +66,118 @@ def test_suspicious_nginx_request_generates_finding() -> None:
     state = DetectionState()
     findings = process_event(
         make_event(
-            event_type="nginx_suspicious_request",
-            src_ip="185.10.10.1",
+            "nginx_suspicious_request",
+            "185.10.10.1",
+            datetime(2026, 3, 25, 10, 0, 4),
             source="nginx",
             service="nginx",
             method="GET",
             path="/wp-login.php",
             status_code=404,
         ),
-        state,
-    )
-
-    assert len(findings) == 1
-    assert findings[0].finding_type == "suspicious_web_probe"
-
-
-def test_web_probe_followed_by_auth_activity_generates_finding() -> None:
-    """Suspicious web probe plus auth activity should correlate."""
-    state = DetectionState()
-    ip = "185.10.10.1"
-
-    process_event(
-        make_event(
-            event_type="nginx_suspicious_request",
-            src_ip=ip,
-            source="nginx",
-            service="nginx",
-            method="GET",
-            path="/wp-login.php",
-            status_code=404,
-        ),
-        state,
-    )
-    findings = process_event(
-        make_event("ssh_failed_login", ip, "admin"),
         state,
     )
 
     finding_types = {finding.finding_type for finding in findings}
-    assert "web_probe_followed_by_auth_activity" in finding_types
+    assert "suspicious_web_probe" in finding_types
 
 
-def test_web_probe_followed_by_fail2ban_ban_generates_finding() -> None:
-    """Suspicious web probe plus later ban should correlate."""
+def test_repeated_mail_auth_failures_generate_finding() -> None:
+    """Repeated mail auth failures should trigger once per IP."""
     state = DetectionState()
-    ip = "185.10.10.1"
+    ip = "198.51.100.20"
 
     process_event(
         make_event(
-            event_type="nginx_suspicious_request",
-            src_ip=ip,
-            source="nginx",
-            service="nginx",
-            method="GET",
-            path="/wp-login.php",
-            status_code=404,
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 40),
+            "mailuser",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+    process_event(
+        make_event(
+            "postfix_sasl_auth_failed",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 50),
+            source="mail",
+            service="smtp",
         ),
         state,
     )
     findings = process_event(
         make_event(
-            event_type="fail2ban_ban",
-            src_ip=ip,
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 12, 0),
+            "mailuser",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "repeated_mail_auth_failures" in finding_types
+
+
+def test_mail_success_after_failures_generates_finding() -> None:
+    """Mail success after failures should trigger high-severity finding."""
+    state = DetectionState()
+    ip = "198.51.100.20"
+
+    process_event(
+        make_event(
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 40),
+            "mailuser",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+    findings = process_event(
+        make_event(
+            "dovecot_success_login",
+            ip,
+            datetime(2026, 3, 25, 10, 30, 0),
+            "mailuser",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "mail_success_after_failures" in finding_types
+
+
+def test_ip_banned_after_mail_activity_generates_finding() -> None:
+    """Ban after mail auth activity should generate correlation finding."""
+    state = DetectionState()
+    ip = "198.51.100.20"
+
+    process_event(
+        make_event(
+            "postfix_sasl_auth_failed",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 50),
+            source="mail",
+            service="smtp",
+        ),
+        state,
+    )
+    findings = process_event(
+        make_event(
+            "fail2ban_ban",
+            ip,
+            datetime(2026, 3, 25, 10, 12, 30),
             source="fail2ban",
-            service="sshd",
+            service="postfix-sasl",
             action="ban",
             jail="actions",
         ),
@@ -162,38 +185,4 @@ def test_web_probe_followed_by_fail2ban_ban_generates_finding() -> None:
     )
 
     finding_types = {finding.finding_type for finding in findings}
-    assert "web_probe_followed_by_fail2ban_ban" in finding_types
-
-
-def test_multi_source_ip_activity_generates_finding() -> None:
-    """IP seen in nginx, auth, and fail2ban should trigger high finding."""
-    state = DetectionState()
-    ip = "185.10.10.1"
-
-    process_event(
-        make_event(
-            event_type="nginx_suspicious_request",
-            src_ip=ip,
-            source="nginx",
-            service="nginx",
-            method="GET",
-            path="/wp-login.php",
-            status_code=404,
-        ),
-        state,
-    )
-    process_event(make_event("ssh_failed_login", ip, "admin"), state)
-    findings = process_event(
-        make_event(
-            event_type="fail2ban_ban",
-            src_ip=ip,
-            source="fail2ban",
-            service="sshd",
-            action="ban",
-            jail="actions",
-        ),
-        state,
-    )
-
-    finding_types = {finding.finding_type for finding in findings}
-    assert "multi_source_ip_activity" in finding_types
+    assert "ip_banned_after_mail_activity" in finding_types

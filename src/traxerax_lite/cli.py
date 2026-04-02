@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--mail-log",
+        help="Path to mail auth log file",
+    )
+
+    parser.add_argument(
         "--year",
         type=int,
         default=None,

@@ -1,7 +1,7 @@
 """Parsers for supported log sources."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable, Optional
 from urllib.parse import urlsplit
 
@@ -37,6 +37,31 @@ NGINX_ACCESS_PATTERN = re.compile(
     r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<ts>[^\]]+)\]\s+'
     r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+'
     r'(?P<status>\d{3})\s+\S+'
+)
+
+DOVECOT_FAILED_PATTERN = re.compile(
+    r"^(?P<ts>\w{3}\s+\d+\s\d{2}:\d{2}:\d{2})\s+"
+    r"(?P<host>\S+)\s+"
+    r"(?P<proc>dovecot:\s+(?:imap|pop3)-login)"
+    r"(?:\[\d+\])?:\s+"
+    r"Disconnected \(auth failed.*\):\s+"
+    r"user=<(?P<user>[^>]*)>.*\brip=(?P<ip>[^,\s]+)"
+)
+
+DOVECOT_SUCCESS_PATTERN = re.compile(
+    r"^(?P<ts>\w{3}\s+\d+\s\d{2}:\d{2}:\d{2})\s+"
+    r"(?P<host>\S+)\s+"
+    r"(?P<proc>dovecot:\s+(?:imap|pop3)-login)"
+    r"(?:\[\d+\])?:\s+"
+    r"Login:\s+user=<(?P<user>[^>]*)>.*\brip=(?P<ip>[^,\s]+)"
+)
+
+POSTFIX_SASL_FAILED_PATTERN = re.compile(
+    r"^(?P<ts>\w{3}\s+\d+\s\d{2}:\d{2}:\d{2})\s+"
+    r"(?P<host>\S+)\s+"
+    r"(?P<proc>[\w\-/]+)(?:\[\d+\])?:\s+"
+    r"warning:\s+\S+\[(?P<ip>\S+)\]:\s+"
+    r"SASL \S+ authentication failed"
 )
 
 
@@ -119,10 +144,11 @@ def parse_nginx_access_line(
     if not match:
         return None
 
-    timestamp = datetime.strptime(
+    parsed_timestamp = datetime.strptime(
         match.group("ts"),
         "%d/%b/%Y:%H:%M:%S %z",
     )
+    timestamp = parsed_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
 
     path = match.group("path")
     event_type = "nginx_request"
@@ -141,6 +167,56 @@ def parse_nginx_access_line(
         path=path,
         status_code=int(match.group("status")),
     )
+
+
+def parse_mail_line(line: str, year: Optional[int] = None) -> Optional[Event]:
+    """Parse a single mail auth log line."""
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    parsed_year = year or datetime.now().year
+
+    match = DOVECOT_FAILED_PATTERN.match(stripped)
+    if match:
+        return _build_mail_event(
+            match=match,
+            raw=stripped,
+            event_type="dovecot_failed_login",
+            year=parsed_year,
+            service=_service_from_dovecot_proc(match.group("proc")),
+        )
+
+    match = DOVECOT_SUCCESS_PATTERN.match(stripped)
+    if match:
+        return _build_mail_event(
+            match=match,
+            raw=stripped,
+            event_type="dovecot_success_login",
+            year=parsed_year,
+            service=_service_from_dovecot_proc(match.group("proc")),
+        )
+
+    match = POSTFIX_SASL_FAILED_PATTERN.match(stripped)
+    if match:
+        return _build_mail_event(
+            match=match,
+            raw=stripped,
+            event_type="postfix_sasl_auth_failed",
+            year=parsed_year,
+            service="smtp",
+        )
+
+    return None
+
+
+def _service_from_dovecot_proc(proc: str) -> str:
+    """Map dovecot login process string to service name."""
+    if "imap-login" in proc:
+        return "imap"
+    if "pop3-login" in proc:
+        return "pop3"
+    return "mail-auth"
 
 
 def _build_auth_event(
@@ -164,6 +240,34 @@ def _build_auth_event(
         src_ip=match.group("ip"),
         port=int(match.group("port")),
         service="ssh",
+        hostname=match.group("host"),
+        process=match.group("proc"),
+    )
+
+
+def _build_mail_event(
+    match: re.Match[str],
+    raw: str,
+    event_type: str,
+    year: int,
+    service: str,
+) -> Event:
+    """Build Event object from mail log regex match."""
+    timestamp = datetime.strptime(
+        f"{year} {match.group('ts')}",
+        "%Y %b %d %H:%M:%S",
+    )
+
+    username = match.groupdict().get("user")
+
+    return Event(
+        timestamp=timestamp,
+        source="mail",
+        event_type=event_type,
+        raw=raw,
+        username=username if username else None,
+        src_ip=match.group("ip"),
+        service=service,
         hostname=match.group("host"),
         process=match.group("proc"),
     )

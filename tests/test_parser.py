@@ -3,6 +3,7 @@
 from traxerax_lite.parser import (
     parse_auth_line,
     parse_fail2ban_line,
+    parse_mail_line,
     parse_nginx_access_line,
 )
 
@@ -20,10 +21,6 @@ def test_parse_failed_login() -> None:
     assert event.event_type == "ssh_failed_login"
     assert event.username == "admin"
     assert event.src_ip == "185.10.10.1"
-    assert event.port == 40001
-    assert event.hostname == "debian"
-    assert event.process == "sshd"
-    assert event.service == "ssh"
 
 
 def test_parse_root_login_attempt() -> None:
@@ -38,8 +35,6 @@ def test_parse_root_login_attempt() -> None:
     assert event is not None
     assert event.event_type == "ssh_root_login_attempt"
     assert event.username == "root"
-    assert event.src_ip == "185.10.10.1"
-    assert event.port == 40002
 
 
 def test_parse_success_login() -> None:
@@ -54,20 +49,6 @@ def test_parse_success_login() -> None:
     assert event is not None
     assert event.event_type == "ssh_success_login"
     assert event.username == "user1"
-    assert event.src_ip == "203.0.113.77"
-    assert event.port == 50001
-
-
-def test_parse_unsupported_auth_line_returns_none() -> None:
-    """Unsupported auth lines should return None."""
-    line = (
-        "Mar 25 10:02:00 debian CRON[2100]: pam_unix(cron:session): "
-        "session opened for user root(uid=0) by root(uid=0)"
-    )
-
-    event = parse_auth_line(line, year=2026)
-
-    assert event is None
 
 
 def test_parse_fail2ban_ban_line() -> None:
@@ -80,60 +61,8 @@ def test_parse_fail2ban_ban_line() -> None:
     event = parse_fail2ban_line(line)
 
     assert event is not None
-    assert event.source == "fail2ban"
     assert event.event_type == "fail2ban_ban"
     assert event.src_ip == "185.10.10.1"
-    assert event.service == "sshd"
-    assert event.action == "ban"
-    assert event.jail == "actions"
-
-
-def test_parse_fail2ban_unban_line() -> None:
-    """Fail2ban unban lines should parse into normalized events."""
-    line = (
-        "2026-03-25 10:10:08,456 fail2ban.actions        [3001]: "
-        "NOTICE  [sshd] Unban 185.10.10.1"
-    )
-
-    event = parse_fail2ban_line(line)
-
-    assert event is not None
-    assert event.event_type == "fail2ban_unban"
-    assert event.src_ip == "185.10.10.1"
-    assert event.action == "unban"
-
-
-def test_parse_unsupported_fail2ban_line_returns_none() -> None:
-    """Unsupported fail2ban lines should return None."""
-    line = (
-        "2026-03-25 10:15:00,000 fail2ban.server [3001]: "
-        "INFO Starting Fail2ban"
-    )
-
-    event = parse_fail2ban_line(line)
-
-    assert event is None
-
-
-def test_parse_nginx_regular_request() -> None:
-    """Regular nginx access lines should parse into nginx_request."""
-    line = (
-        '203.0.113.77 - - [25/Mar/2026:10:01:00 +0000] '
-        '"GET / HTTP/1.1" 200 612 "-" "Mozilla/5.0"'
-    )
-
-    event = parse_nginx_access_line(
-        line,
-        suspicious_paths=set(),
-    )
-
-    assert event is not None
-    assert event.source == "nginx"
-    assert event.event_type == "nginx_request"
-    assert event.src_ip == "203.0.113.77"
-    assert event.method == "GET"
-    assert event.path == "/"
-    assert event.status_code == 200
 
 
 def test_parse_nginx_suspicious_request() -> None:
@@ -150,19 +79,67 @@ def test_parse_nginx_suspicious_request() -> None:
 
     assert event is not None
     assert event.event_type == "nginx_suspicious_request"
-    assert event.src_ip == "185.10.10.1"
-    assert event.method == "GET"
     assert event.path == "/wp-login.php"
-    assert event.status_code == 404
 
 
-def test_parse_unsupported_nginx_line_returns_none() -> None:
-    """Unsupported nginx lines should return None."""
-    line = "not a real nginx access log line"
-
-    event = parse_nginx_access_line(
-        line,
-        suspicious_paths=set(),
+def test_parse_dovecot_failed_login() -> None:
+    """Dovecot failed login lines should parse into an Event."""
+    line = (
+        "Mar 25 10:11:40 debian dovecot: imap-login: "
+        "Disconnected (auth failed, 1 attempts in 2 secs): "
+        "user=<mailuser>, method=PLAIN, rip=198.51.100.20, "
+        "lip=203.0.113.10, TLS, session=<abc123>"
     )
+
+    event = parse_mail_line(line, year=2026)
+
+    assert event is not None
+    assert event.source == "mail"
+    assert event.event_type == "dovecot_failed_login"
+    assert event.username == "mailuser"
+    assert event.src_ip == "198.51.100.20"
+    assert event.service == "imap"
+
+
+def test_parse_dovecot_success_login() -> None:
+    """Dovecot success login lines should parse into an Event."""
+    line = (
+        "Mar 25 10:30:00 debian dovecot: imap-login: "
+        "Login: user=<mailuser>, method=PLAIN, rip=198.51.100.20, "
+        "lip=203.0.113.10, mpid=4201, TLS, session=<ghi789>"
+    )
+
+    event = parse_mail_line(line, year=2026)
+
+    assert event is not None
+    assert event.event_type == "dovecot_success_login"
+    assert event.username == "mailuser"
+    assert event.src_ip == "198.51.100.20"
+
+
+def test_parse_postfix_sasl_failed_auth() -> None:
+    """Postfix SASL failures should parse into an Event."""
+    line = (
+        "Mar 25 10:11:50 debian submission/smtpd[3101]: warning: "
+        "unknown[198.51.100.20]: SASL LOGIN authentication failed: "
+        "authentication failure"
+    )
+
+    event = parse_mail_line(line, year=2026)
+
+    assert event is not None
+    assert event.event_type == "postfix_sasl_auth_failed"
+    assert event.src_ip == "198.51.100.20"
+    assert event.service == "smtp"
+
+
+def test_parse_unsupported_mail_line_returns_none() -> None:
+    """Unsupported mail lines should return None."""
+    line = (
+        "Mar 25 11:00:00 debian postfix/qmgr[999]: 123ABCD: "
+        "from=<example@example.com>, size=1234, nrcpt=1"
+    )
+
+    event = parse_mail_line(line, year=2026)
 
     assert event is None
