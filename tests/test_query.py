@@ -10,6 +10,7 @@ from traxerax_lite.query import (
     get_finding_counts_by_type,
     get_finding_counts_by_type_for_ip,
     get_ip_overview,
+    get_nginx_error_status_counts_for_ip,
     get_ip_persistence_stats,
     get_ip_post_ban_activity_count,
     get_ip_post_ban_return_count,
@@ -1000,6 +1001,62 @@ def test_get_finding_counts_by_type_for_ip_returns_grouped_counts() -> None:
         "root_login_attempt",
         "multi_source_ip_activity",
     }
+
+    connection.close()
+
+
+def test_get_nginx_error_status_counts_for_ip_groups_4xx_and_5xx() -> None:
+    """Nginx error summary should group per-status 4xx/5xx counts."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    events = [
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="nginx",
+            event_type="nginx_request",
+            raw="404-1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/a",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 2),
+            source="nginx",
+            event_type="nginx_request",
+            raw="404-2",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/b",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 3),
+            source="nginx",
+            event_type="nginx_request",
+            raw="503-1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/c",
+            status_code=503,
+        ),
+    ]
+    for event in events:
+        insert_event(connection, event)
+
+    rows = get_nginx_error_status_counts_for_ip(connection, "185.10.10.1")
+
+    assert rows[0]["status_code"] == 404
+    assert rows[0]["count"] == 2
+    assert rows[1]["status_code"] == 503
+    assert rows[1]["count"] == 1
 
     connection.close()
 

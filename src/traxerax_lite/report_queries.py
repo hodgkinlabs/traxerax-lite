@@ -11,6 +11,7 @@ from traxerax_lite.query import (
     get_finding_counts_by_type_for_ip,
     get_findings_for_ip,
     get_ip_overview,
+    get_nginx_error_status_counts_for_ip,
     get_ip_persistence_stats,
     get_ip_post_ban_activity_count,
     get_ip_post_ban_return_count,
@@ -158,6 +159,10 @@ def build_ip_report(
     source_counts = get_event_counts_by_source_for_ip(connection, src_ip)
     event_type_counts = get_event_counts_by_type_for_ip(connection, src_ip)
     finding_type_counts = get_finding_counts_by_type_for_ip(connection, src_ip)
+    nginx_error_status_counts = get_nginx_error_status_counts_for_ip(
+        connection,
+        src_ip,
+    )
     persistence_stats = get_ip_persistence_stats(connection, src_ip)
     post_ban_activity_count = get_ip_post_ban_activity_count(connection, src_ip)
     post_ban_return_count = get_ip_post_ban_return_count(connection, src_ip)
@@ -244,6 +249,14 @@ def build_ip_report(
     if finding_type_counts:
         for row in finding_type_counts:
             lines.append(f"  - {row['finding_type']}: {row['count']}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("nginx_error_status_counts:")
+    if nginx_error_status_counts:
+        for row in nginx_error_status_counts:
+            lines.append(f"  - {row['status_code']}: {row['count']}")
     else:
         lines.append("  - none")
 

@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from traxerax_lite.models import Event, Finding
 
@@ -23,6 +24,9 @@ class DetectionState:
     web_activity_ips: set[str] = field(default_factory=set)
     web_probe_ips: set[str] = field(default_factory=set)
     mail_activity_ips: set[str] = field(default_factory=set)
+    first_auth_activity_time: dict[str, datetime] = field(default_factory=dict)
+    first_fail2ban_ban_time: dict[str, datetime] = field(default_factory=dict)
+    first_web_probe_time: dict[str, datetime] = field(default_factory=dict)
     http_error_counts: dict[tuple[str, int], int] = field(
         default_factory=lambda: defaultdict(int)
     )
@@ -77,6 +81,7 @@ def _process_auth_event(
     ip = event.src_ip
 
     state.auth_activity_ips.add(ip)
+    state.first_auth_activity_time.setdefault(ip, event.timestamp)
 
     if event.event_type == "ssh_root_login_attempt":
         findings.append(
@@ -139,6 +144,7 @@ def _process_fail2ban_event(
 
     if event.event_type == "fail2ban_ban":
         state.fail2ban_banned_ips.add(ip)
+        state.first_fail2ban_ban_time.setdefault(ip, event.timestamp)
 
         if ip in state.auth_activity_ips and ip not in state.fail2ban_alerted:
             state.fail2ban_alerted.add(ip)
@@ -200,6 +206,7 @@ def _process_nginx_event(
 
     if event.event_type == "nginx_suspicious_request":
         state.web_probe_ips.add(ip)
+        state.first_web_probe_time.setdefault(ip, event.timestamp)
 
         if ip not in state.suspicious_web_alerted:
             state.suspicious_web_alerted.add(ip)
@@ -235,7 +242,7 @@ def _process_nginx_event(
                     message=(
                         "Repeated HTTP error responses detected from "
                         f"{ip} (status={event.status_code}, "
-                        f"count={state.http_error_counts[error_key]})"
+                        f"threshold={state.http_error_threshold})"
                     ),
                     src_ip=ip,
                     timestamp=event.timestamp,
@@ -306,7 +313,13 @@ def _check_cross_source_correlations(
     findings: list[Finding] = []
     ip = event.src_ip
 
-    if ip in state.web_probe_ips and ip in state.auth_activity_ips:
+    web_probe_time = state.first_web_probe_time.get(ip)
+
+    if (
+        event.source == "auth"
+        and web_probe_time is not None
+        and web_probe_time < event.timestamp
+    ):
         if ip not in state.web_to_auth_alerted:
             state.web_to_auth_alerted.add(ip)
             findings.append(
@@ -322,7 +335,12 @@ def _check_cross_source_correlations(
                 )
             )
 
-    if ip in state.web_probe_ips and ip in state.fail2ban_banned_ips:
+    if (
+        event.source == "fail2ban"
+        and event.event_type == "fail2ban_ban"
+        and web_probe_time is not None
+        and web_probe_time < event.timestamp
+    ):
         if ip not in state.web_to_ban_alerted:
             state.web_to_ban_alerted.add(ip)
             findings.append(

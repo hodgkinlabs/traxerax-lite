@@ -1,12 +1,14 @@
 """Main entry point."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+from typing import Callable
 
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import load_config
 from traxerax_lite.detector import DetectionState, process_event
+from traxerax_lite.models import Event
 from traxerax_lite.parser import (
     parse_auth_line,
     parse_fail2ban_line,
@@ -82,80 +84,26 @@ def main() -> None:
         parsed_count = 0
         finding_count = 0
 
-        if args.auth_log:
-            for line in read_lines(args.auth_log):
-                event = parse_auth_line(
-                    line,
-                    year=args.year,
-                    local_timezone=local_timezone,
-                )
-                if event is None:
-                    continue
+        ordered_events = _collect_normalized_events(
+            auth_log=args.auth_log,
+            fail2ban_log=args.fail2ban_log,
+            nginx_log=args.nginx_log,
+            mail_log=args.mail_log,
+            year=args.year,
+            local_timezone=local_timezone,
+            nginx_paths=nginx_paths,
+        )
 
-                parsed_count += 1
-                logger.info(event_formatter(event))
-                insert_event(connection, event)
+        for event in ordered_events:
+            parsed_count += 1
+            logger.info(event_formatter(event))
+            insert_event(connection, event)
 
-                findings = process_event(event, state)
-                for finding in findings:
-                    finding_count += 1
-                    logger.info(finding_formatter(finding))
-                    insert_finding(connection, finding)
-
-        if args.fail2ban_log:
-            for line in read_lines(args.fail2ban_log):
-                event = parse_fail2ban_line(
-                    line,
-                    local_timezone=local_timezone,
-                )
-                if event is None:
-                    continue
-
-                parsed_count += 1
-                logger.info(event_formatter(event))
-                insert_event(connection, event)
-
-                findings = process_event(event, state)
-                for finding in findings:
-                    finding_count += 1
-                    logger.info(finding_formatter(finding))
-                    insert_finding(connection, finding)
-
-        if args.nginx_log:
-            for line in read_lines(args.nginx_log):
-                event = parse_nginx_access_line(line, nginx_paths)
-                if event is None:
-                    continue
-
-                parsed_count += 1
-                logger.info(event_formatter(event))
-                insert_event(connection, event)
-
-                findings = process_event(event, state)
-                for finding in findings:
-                    finding_count += 1
-                    logger.info(finding_formatter(finding))
-                    insert_finding(connection, finding)
-
-        if args.mail_log:
-            for line in read_lines(args.mail_log):
-                event = parse_mail_line(
-                    line,
-                    year=args.year,
-                    local_timezone=local_timezone,
-                )
-                if event is None:
-                    continue
-
-                parsed_count += 1
-                logger.info(event_formatter(event))
-                insert_event(connection, event)
-
-                findings = process_event(event, state)
-                for finding in findings:
-                    finding_count += 1
-                    logger.info(finding_formatter(finding))
-                    insert_finding(connection, finding)
+            findings = process_event(event, state)
+            for finding in findings:
+                finding_count += 1
+                logger.info(finding_formatter(finding))
+                insert_finding(connection, finding)
 
         logger.info("\n[SUMMARY]")
         logger.info(f"parsed_events={parsed_count}")
@@ -163,6 +111,67 @@ def main() -> None:
         logger.info(f"database={args.db_path}")
     finally:
         connection.close()
+
+
+def _collect_normalized_events(
+    auth_log: str | None,
+    fail2ban_log: str | None,
+    nginx_log: str | None,
+    mail_log: str | None,
+    year: int | None,
+    local_timezone: tzinfo,
+    nginx_paths: list[str],
+) -> list[Event]:
+    """Collect parsed events from all sources and return them in time order."""
+    collected: list[tuple[datetime, int, Event]] = []
+    sequence = 0
+
+    def collect_from_log(
+        path: str | None,
+        parser: Callable[[str], Event | None],
+    ) -> None:
+        nonlocal sequence
+        if not path:
+            return
+
+        for line in read_lines(path):
+            event = parser(line)
+            if event is None:
+                continue
+
+            collected.append((event.timestamp, sequence, event))
+            sequence += 1
+
+    collect_from_log(
+        auth_log,
+        lambda line: parse_auth_line(
+            line,
+            year=year,
+            local_timezone=local_timezone,
+        ),
+    )
+    collect_from_log(
+        fail2ban_log,
+        lambda line: parse_fail2ban_line(
+            line,
+            local_timezone=local_timezone,
+        ),
+    )
+    collect_from_log(
+        nginx_log,
+        lambda line: parse_nginx_access_line(line, nginx_paths),
+    )
+    collect_from_log(
+        mail_log,
+        lambda line: parse_mail_line(
+            line,
+            year=year,
+            local_timezone=local_timezone,
+        ),
+    )
+
+    collected.sort(key=lambda item: (item[0], item[1]))
+    return [event for _, _, event in collected]
 
 
 if __name__ == "__main__":

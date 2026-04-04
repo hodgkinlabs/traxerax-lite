@@ -259,3 +259,38 @@ def test_ip_banned_after_web_activity_generates_finding() -> None:
 
     finding_types = {finding.finding_type for finding in findings}
     assert "ip_banned_after_web_activity" in finding_types
+
+
+def test_web_probe_followed_by_fail2ban_ban_requires_temporal_order() -> None:
+    """Web probe to ban finding should not fire when the ban came first."""
+    state = DetectionState(http_error_statuses={404}, http_error_threshold=3)
+    ip = "185.10.10.1"
+
+    process_event(
+        make_event(
+            "fail2ban_ban",
+            ip,
+            datetime(2026, 3, 25, 10, 0, 1),
+            source="fail2ban",
+            service="nginx-badbots",
+            action="ban",
+            jail="actions",
+        ),
+        state,
+    )
+    findings = process_event(
+        make_event(
+            "nginx_suspicious_request",
+            ip,
+            datetime(2026, 3, 25, 10, 0, 2),
+            source="nginx",
+            service="nginx",
+            method="GET",
+            path="/xmlrpc.php",
+            status_code=404,
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "web_probe_followed_by_fail2ban_ban" not in finding_types
