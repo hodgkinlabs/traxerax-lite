@@ -48,9 +48,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--config",
+        default="config/default.yaml",
+        help="Path to configuration file",
+    )
+
+    parser.add_argument(
         "--db-path",
         default="data/output/traxerax_lite.db",
         help="Path to SQLite database file",
+    )
+
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output in JSON format",
     )
 
     return parser

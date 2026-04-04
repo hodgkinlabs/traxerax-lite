@@ -1,5 +1,6 @@
 """Formatting helpers for terminal output."""
 
+import json
 from traxerax_lite.models import Event, Finding
 
 
@@ -45,3 +46,39 @@ def format_finding(finding: Finding) -> str:
         f"ip={ip} "
         f"message={finding.message}"
     )
+
+
+def json_format_event(event: Event) -> str:
+    """Return JSON representation of an event."""
+    data = {
+        "type": "event",
+        "timestamp": event.timestamp.isoformat(),
+        "source": event.source,
+        "event_type": event.event_type,
+        "raw": event.raw,
+        "username": event.username,
+        "src_ip": event.src_ip,
+        "port": event.port,
+        "service": event.service,
+        "hostname": event.hostname,
+        "process": event.process,
+        "action": event.action,
+        "jail": event.jail,
+        "method": event.method,
+        "path": event.path,
+        "status_code": event.status_code,
+    }
+    return json.dumps(data)
+
+
+def json_format_finding(finding: Finding) -> str:
+    """Return JSON representation of a finding."""
+    data = {
+        "type": "finding",
+        "timestamp": finding.timestamp.isoformat(),
+        "finding_type": finding.finding_type,
+        "severity": finding.severity,
+        "message": finding.message,
+        "src_ip": finding.src_ip,
+    }
+    return json.dumps(data)
