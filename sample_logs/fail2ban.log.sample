@@ -1,4 +1,12 @@
 2026-03-25 10:00:08,123 fail2ban.actions        [3001]: NOTICE  [sshd] Ban 185.10.10.1
 2026-03-25 10:10:08,456 fail2ban.actions        [3001]: NOTICE  [sshd] Unban 185.10.10.1
 2026-03-25 10:12:30,789 fail2ban.actions        [3001]: NOTICE  [postfix-sasl] Ban 198.51.100.20
+2026-03-25 10:18:40,201 fail2ban.actions        [3001]: NOTICE  [dovecot] Ban 185.10.10.1
 2026-03-25 10:20:45,111 fail2ban.actions        [3001]: NOTICE  [sshd] Ban 185.10.10.1
+2026-03-25 10:22:31,000 fail2ban.actions        [3001]: NOTICE  [postfix-sasl] Unban 198.51.100.20
+2026-03-25 10:31:55,510 fail2ban.actions        [3001]: NOTICE  [nginx-badbots] Ban 198.51.100.20
+2026-03-25 10:33:40,000 fail2ban.actions        [3001]: NOTICE  [sshd] Unban 185.10.10.1
+2026-03-25 10:36:50,900 fail2ban.actions        [3001]: NOTICE  [nginx-badbots] Unban 198.51.100.20
+2026-03-25 10:37:20,333 fail2ban.actions        [3001]: NOTICE  [sshd] Ban 198.51.100.20
+2026-03-25 10:39:10,010 fail2ban.actions        [3001]: NOTICE  [sshd] Unban 198.51.100.20
+2026-03-25 10:41:08,777 fail2ban.actions        [3001]: NOTICE  [nginx-badbots] Ban 185.10.10.1
