@@ -63,6 +63,29 @@ def test_build_summary_report_includes_persistence_sections() -> None:
         Event(
             timestamp=datetime(2026, 3, 25, 10, 4, 1),
             source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 5, 1),
+            source="nginx",
+            event_type="nginx_request",
+            raw="return1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/404",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 6, 1),
+            source="fail2ban",
             event_type="fail2ban_ban",
             raw="ban2",
             src_ip="185.10.10.1",
@@ -94,6 +117,7 @@ def test_build_summary_report_includes_persistence_sections() -> None:
     assert "persistent_multi_source_ips:" in report
     assert "root_attempt_ips_with_repeat_activity:" in report
     assert "185.10.10.1" in report
+    assert "returns=1" in report
 
     connection.close()
 
@@ -145,6 +169,17 @@ def test_build_ip_report_includes_persistence_flags() -> None:
         ),
         Event(
             timestamp=datetime(2026, 3, 25, 10, 4, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 5, 1),
             source="nginx",
             event_type="nginx_suspicious_request",
             raw="probe1",
@@ -178,6 +213,7 @@ def test_build_ip_report_includes_persistence_flags() -> None:
     assert "ban_count: 1" in report
     assert "root_attempt_count: 1" in report
     assert "auth_event_count: 3" in report
+    assert "post_ban_return_count: 1" in report
     assert "repeat_banned: no" in report
     assert "returned_after_ban: yes" in report
     assert "persistent_multi_source: yes" in report

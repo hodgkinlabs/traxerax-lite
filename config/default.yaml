@@ -1,4 +1,17 @@
 nginx:
+  repeated_error_threshold: 3
+  error_status_codes:
+    - 400
+    - 401
+    - 403
+    - 404
+    - 408
+    - 429
+    - 444
+    - 500
+    - 502
+    - 503
+    - 504
   suspicious_paths:
     - "/wp-login.php"
     - "/xmlrpc.php"

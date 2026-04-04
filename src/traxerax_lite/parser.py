@@ -1,7 +1,7 @@
 """Parsers for supported log sources."""
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, tzinfo, timezone
 from typing import Iterable, Optional
 from urllib.parse import urlsplit
 
@@ -65,7 +65,11 @@ POSTFIX_SASL_FAILED_PATTERN = re.compile(
 )
 
 
-def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
+def parse_auth_line(
+    line: str,
+    year: Optional[int] = None,
+    local_timezone: tzinfo = timezone.utc,
+) -> Optional[Event]:
     """Parse a single auth log line."""
     stripped = line.strip()
     if not stripped:
@@ -80,7 +84,13 @@ def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
         if user == "root":
             event_type = "ssh_root_login_attempt"
 
-        return _build_auth_event(match, stripped, event_type, parsed_year)
+        return _build_auth_event(
+            match,
+            stripped,
+            event_type,
+            parsed_year,
+            local_timezone,
+        )
 
     match = SUCCESS_PATTERN.match(stripped)
     if match:
@@ -89,12 +99,16 @@ def parse_auth_line(line: str, year: Optional[int] = None) -> Optional[Event]:
             stripped,
             "ssh_success_login",
             parsed_year,
+            local_timezone,
         )
 
     return None
 
 
-def parse_fail2ban_line(line: str) -> Optional[Event]:
+def parse_fail2ban_line(
+    line: str,
+    local_timezone: tzinfo = timezone.utc,
+) -> Optional[Event]:
     """Parse a single fail2ban log line."""
     stripped = line.strip()
     if not stripped:
@@ -104,9 +118,12 @@ def parse_fail2ban_line(line: str) -> Optional[Event]:
     if not match:
         return None
 
-    timestamp = datetime.strptime(
-        match.group("ts"),
-        "%Y-%m-%d %H:%M:%S",
+    timestamp = _to_utc_naive(
+        datetime.strptime(
+            match.group("ts"),
+            "%Y-%m-%d %H:%M:%S",
+        ),
+        local_timezone,
     )
 
     action = match.group("action").lower()
@@ -169,7 +186,11 @@ def parse_nginx_access_line(
     )
 
 
-def parse_mail_line(line: str, year: Optional[int] = None) -> Optional[Event]:
+def parse_mail_line(
+    line: str,
+    year: Optional[int] = None,
+    local_timezone: tzinfo = timezone.utc,
+) -> Optional[Event]:
     """Parse a single mail auth log line."""
     stripped = line.strip()
     if not stripped:
@@ -185,6 +206,7 @@ def parse_mail_line(line: str, year: Optional[int] = None) -> Optional[Event]:
             event_type="dovecot_failed_login",
             year=parsed_year,
             service=_service_from_dovecot_proc(match.group("proc")),
+            local_timezone=local_timezone,
         )
 
     match = DOVECOT_SUCCESS_PATTERN.match(stripped)
@@ -195,6 +217,7 @@ def parse_mail_line(line: str, year: Optional[int] = None) -> Optional[Event]:
             event_type="dovecot_success_login",
             year=parsed_year,
             service=_service_from_dovecot_proc(match.group("proc")),
+            local_timezone=local_timezone,
         )
 
     match = POSTFIX_SASL_FAILED_PATTERN.match(stripped)
@@ -205,6 +228,7 @@ def parse_mail_line(line: str, year: Optional[int] = None) -> Optional[Event]:
             event_type="postfix_sasl_auth_failed",
             year=parsed_year,
             service="smtp",
+            local_timezone=local_timezone,
         )
 
     return None
@@ -224,11 +248,15 @@ def _build_auth_event(
     raw: str,
     event_type: str,
     year: int,
+    local_timezone: tzinfo,
 ) -> Event:
     """Build Event object from auth log regex match."""
-    timestamp = datetime.strptime(
-        f"{year} {match.group('ts')}",
-        "%Y %b %d %H:%M:%S",
+    timestamp = _to_utc_naive(
+        datetime.strptime(
+            f"{year} {match.group('ts')}",
+            "%Y %b %d %H:%M:%S",
+        ),
+        local_timezone,
     )
 
     return Event(
@@ -251,11 +279,15 @@ def _build_mail_event(
     event_type: str,
     year: int,
     service: str,
+    local_timezone: tzinfo,
 ) -> Event:
     """Build Event object from mail log regex match."""
-    timestamp = datetime.strptime(
-        f"{year} {match.group('ts')}",
-        "%Y %b %d %H:%M:%S",
+    timestamp = _to_utc_naive(
+        datetime.strptime(
+            f"{year} {match.group('ts')}",
+            "%Y %b %d %H:%M:%S",
+        ),
+        local_timezone,
     )
 
     username = match.groupdict().get("user")
@@ -271,3 +303,11 @@ def _build_mail_event(
         hostname=match.group("host"),
         process=match.group("proc"),
     )
+
+
+def _to_utc_naive(timestamp: datetime, local_timezone: tzinfo) -> datetime:
+    """Normalize a timestamp into a naive UTC datetime."""
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=local_timezone)
+
+    return timestamp.astimezone(timezone.utc).replace(tzinfo=None)

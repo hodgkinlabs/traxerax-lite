@@ -1,5 +1,7 @@
 """Tests for log parsing."""
 
+from datetime import timezone, timedelta
+
 from traxerax_lite.parser import (
     parse_auth_line,
     parse_fail2ban_line,
@@ -63,6 +65,22 @@ def test_parse_fail2ban_ban_line() -> None:
     assert event is not None
     assert event.event_type == "fail2ban_ban"
     assert event.src_ip == "185.10.10.1"
+
+
+def test_parse_fail2ban_line_normalizes_local_timezone_to_utc() -> None:
+    """Fail2ban timestamps should normalize to UTC for cross-source ordering."""
+    line = (
+        "2026-03-25 10:00:08,123 fail2ban.actions        [3001]: "
+        "NOTICE  [sshd] Ban 185.10.10.1"
+    )
+
+    event = parse_fail2ban_line(
+        line,
+        local_timezone=timezone(timedelta(hours=-7)),
+    )
+
+    assert event is not None
+    assert event.timestamp.isoformat(sep=" ") == "2026-03-25 17:00:08"
 
 
 def test_parse_nginx_suspicious_request() -> None:

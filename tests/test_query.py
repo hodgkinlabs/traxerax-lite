@@ -12,6 +12,7 @@ from traxerax_lite.query import (
     get_ip_overview,
     get_ip_persistence_stats,
     get_ip_post_ban_activity_count,
+    get_ip_post_ban_return_count,
     get_ip_total_findings,
     get_ips_seen_in_auth_and_fail2ban,
     get_ips_with_root_attempt_and_ban,
@@ -377,7 +378,93 @@ def test_get_returned_after_ban_ips_returns_ips_with_post_ban_activity() -> None
 
     assert len(rows) == 1
     assert rows[0]["src_ip"] == "185.10.10.1"
+    assert rows[0]["return_count"] == 1
     assert rows[0]["post_ban_events"] == 1
+
+    connection.close()
+
+
+def test_get_returned_after_ban_ips_uses_unban_windows() -> None:
+    """Returned-after-ban query should track repeated ban/unban cycles."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    events = [
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 5, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 6, 1),
+            source="nginx",
+            event_type="nginx_request",
+            raw="404-1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/missing-1",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 10, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban2",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 15, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban2",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 16, 1),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="auth1",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    ]
+    for event in events:
+        insert_event(connection, event)
+
+    rows = get_returned_after_ban_ips(connection)
+
+    assert len(rows) == 1
+    assert rows[0]["src_ip"] == "185.10.10.1"
+    assert rows[0]["return_count"] == 2
+    assert rows[0]["post_ban_events"] == 2
 
     connection.close()
 
@@ -637,6 +724,88 @@ def test_get_ip_post_ban_activity_count_returns_count() -> None:
     )
 
     count = get_ip_post_ban_activity_count(connection, "185.10.10.1")
+    assert count == 2
+
+    connection.close()
+
+
+def test_get_ip_post_ban_return_count_returns_ban_cycles() -> None:
+    """Per-IP return count should count each ban window that saw a return."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    events = [
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 1, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban1",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 2, 1),
+            source="nginx",
+            event_type="nginx_request",
+            raw="probe1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/missing",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 3, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban2",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 4, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban2",
+            src_ip="185.10.10.1",
+            service="sshd",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 5, 1),
+            source="auth",
+            event_type="ssh_failed_login",
+            raw="auth1",
+            src_ip="185.10.10.1",
+            service="ssh",
+            process="sshd",
+        ),
+    ]
+    for event in events:
+        insert_event(connection, event)
+
+    count = get_ip_post_ban_return_count(connection, "185.10.10.1")
+
     assert count == 2
 
     connection.close()
