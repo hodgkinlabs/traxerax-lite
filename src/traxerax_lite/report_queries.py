@@ -13,6 +13,7 @@ from traxerax_lite.query import (
     get_ip_overview,
     get_ip_persistence_stats,
     get_ip_post_ban_activity_count,
+    get_ip_post_ban_return_count,
     get_ip_total_findings,
     get_ips_seen_in_auth_and_fail2ban,
     get_ips_with_root_attempt_and_ban,
@@ -112,7 +113,11 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     lines.append("returned_after_ban_ips:")
     if returned_after_ban_ips:
         for row in returned_after_ban_ips:
-            lines.append(f"  - {row['src_ip']}: {row['post_ban_events']}")
+            lines.append(
+                f"  - {row['src_ip']}: "
+                f"returns={row['return_count']} "
+                f"events={row['post_ban_events']}"
+            )
     else:
         lines.append("  - none")
 
@@ -155,6 +160,7 @@ def build_ip_report(
     finding_type_counts = get_finding_counts_by_type_for_ip(connection, src_ip)
     persistence_stats = get_ip_persistence_stats(connection, src_ip)
     post_ban_activity_count = get_ip_post_ban_activity_count(connection, src_ip)
+    post_ban_return_count = get_ip_post_ban_return_count(connection, src_ip)
 
     events = get_events_for_ip(connection, src_ip)
     findings = get_findings_for_ip(connection, src_ip)
@@ -176,7 +182,7 @@ def build_ip_report(
     lines.append("persistence_flags:")
     if persistence_stats is not None:
         repeat_banned = persistence_stats["ban_count"] >= 2
-        returned_after_ban = post_ban_activity_count >= 1
+        returned_after_ban = post_ban_return_count >= 1
         persistent_multi_source = (
             persistence_stats["source_count"] >= 2
             and persistence_stats["total_events"] >= 4
@@ -197,6 +203,9 @@ def build_ip_report(
         )
         lines.append(
             f"  - post_ban_activity_events: {post_ban_activity_count}"
+        )
+        lines.append(
+            f"  - post_ban_return_count: {post_ban_return_count}"
         )
         lines.append(f"  - repeat_banned: {'yes' if repeat_banned else 'no'}")
         lines.append(

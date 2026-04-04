@@ -1,6 +1,8 @@
 """Main entry point."""
 
 import logging
+from datetime import datetime, timezone
+
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import load_config
@@ -30,7 +32,18 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     config = load_config(args.config)
-    nginx_paths = config["nginx"]["suspicious_paths"]
+    nginx_config = config.get("nginx", {})
+    nginx_paths = nginx_config.get("suspicious_paths", [])
+    http_error_statuses = set(
+        nginx_config.get(
+            "error_status_codes",
+            [400, 401, 403, 404, 408, 429, 444, 500, 502, 503, 504],
+        )
+    )
+    http_error_threshold = int(
+        nginx_config.get("repeated_error_threshold", 3)
+    )
+    local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
 
     event_formatter = json_format_event if args.json else format_event
     finding_formatter = json_format_finding if args.json else format_finding
@@ -62,13 +75,20 @@ def main() -> None:
                 "or use --report"
             )
 
-        state = DetectionState()
+        state = DetectionState(
+            http_error_statuses=http_error_statuses,
+            http_error_threshold=http_error_threshold,
+        )
         parsed_count = 0
         finding_count = 0
 
         if args.auth_log:
             for line in read_lines(args.auth_log):
-                event = parse_auth_line(line, year=args.year)
+                event = parse_auth_line(
+                    line,
+                    year=args.year,
+                    local_timezone=local_timezone,
+                )
                 if event is None:
                     continue
 
@@ -84,7 +104,10 @@ def main() -> None:
 
         if args.fail2ban_log:
             for line in read_lines(args.fail2ban_log):
-                event = parse_fail2ban_line(line)
+                event = parse_fail2ban_line(
+                    line,
+                    local_timezone=local_timezone,
+                )
                 if event is None:
                     continue
 
@@ -116,7 +139,11 @@ def main() -> None:
 
         if args.mail_log:
             for line in read_lines(args.mail_log):
-                event = parse_mail_line(line, year=args.year)
+                event = parse_mail_line(
+                    line,
+                    year=args.year,
+                    local_timezone=local_timezone,
+                )
                 if event is None:
                     continue
 

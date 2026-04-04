@@ -82,6 +82,44 @@ def test_suspicious_nginx_request_generates_finding() -> None:
     assert "suspicious_web_probe" in finding_types
 
 
+def test_repeated_http_errors_generate_finding() -> None:
+    """Repeated configured HTTP error responses should trigger a finding."""
+    state = DetectionState(http_error_statuses={400, 404, 500}, http_error_threshold=3)
+    ip = "185.10.10.1"
+
+    for second in range(1, 3):
+        process_event(
+            make_event(
+                "nginx_request",
+                ip,
+                datetime(2026, 3, 25, 10, 0, second),
+                source="nginx",
+                service="nginx",
+                method="GET",
+                path="/missing",
+                status_code=404,
+            ),
+            state,
+        )
+
+    findings = process_event(
+        make_event(
+            "nginx_request",
+            ip,
+            datetime(2026, 3, 25, 10, 0, 3),
+            source="nginx",
+            service="nginx",
+            method="GET",
+            path="/missing",
+            status_code=404,
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "repeated_http_error_responses" in finding_types
+
+
 def test_repeated_mail_auth_failures_generate_finding() -> None:
     """Repeated mail auth failures should trigger once per IP."""
     state = DetectionState()
@@ -186,3 +224,38 @@ def test_ip_banned_after_mail_activity_generates_finding() -> None:
 
     finding_types = {finding.finding_type for finding in findings}
     assert "ip_banned_after_mail_activity" in finding_types
+
+
+def test_ip_banned_after_web_activity_generates_finding() -> None:
+    """Ban after prior nginx activity should correlate without auth events."""
+    state = DetectionState(http_error_statuses={404}, http_error_threshold=3)
+    ip = "185.10.10.1"
+
+    process_event(
+        make_event(
+            "nginx_request",
+            ip,
+            datetime(2026, 3, 25, 10, 0, 1),
+            source="nginx",
+            service="nginx",
+            method="GET",
+            path="/missing",
+            status_code=404,
+        ),
+        state,
+    )
+    findings = process_event(
+        make_event(
+            "fail2ban_ban",
+            ip,
+            datetime(2026, 3, 25, 10, 1, 1),
+            source="fail2ban",
+            service="nginx-badbots",
+            action="ban",
+            jail="actions",
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "ip_banned_after_web_activity" in finding_types

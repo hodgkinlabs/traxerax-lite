@@ -152,24 +152,55 @@ def get_repeat_banned_ips(
 def get_returned_after_ban_ips(
     connection: sqlite3.Connection,
 ) -> list[sqlite3.Row]:
-    """Return IPs that showed auth/nginx activity after a prior ban."""
+    """Return IPs that returned after one or more fail2ban ban windows."""
     cursor = connection.execute(
         """
-        WITH first_ban AS (
-            SELECT src_ip, MIN(timestamp) AS first_ban_time
-            FROM events
-            WHERE event_type = 'fail2ban_ban'
-              AND src_ip IS NOT NULL
-            GROUP BY src_ip
+        WITH ban_windows AS (
+            SELECT
+                ban.id AS ban_id,
+                ban.src_ip,
+                ban.timestamp AS ban_time,
+                (
+                    SELECT MIN(next_ban.timestamp)
+                    FROM events AS next_ban
+                    WHERE next_ban.src_ip = ban.src_ip
+                      AND next_ban.event_type = 'fail2ban_ban'
+                      AND next_ban.timestamp > ban.timestamp
+                ) AS next_ban_time,
+                (
+                    SELECT MIN(unban.timestamp)
+                    FROM events AS unban
+                    WHERE unban.src_ip = ban.src_ip
+                      AND unban.event_type = 'fail2ban_unban'
+                      AND unban.timestamp > ban.timestamp
+                ) AS next_unban_time
+            FROM events AS ban
+            WHERE ban.event_type = 'fail2ban_ban'
+              AND ban.src_ip IS NOT NULL
+        ),
+        returned_bans AS (
+            SELECT
+                b.src_ip,
+                b.ban_id,
+                COUNT(e.id) AS post_ban_events
+            FROM ban_windows AS b
+            JOIN events AS e
+                ON e.src_ip = b.src_ip
+            WHERE e.source IN ('auth', 'nginx')
+              AND e.timestamp > COALESCE(b.next_unban_time, b.ban_time)
+              AND (
+                  b.next_ban_time IS NULL
+                  OR e.timestamp < b.next_ban_time
+              )
+            GROUP BY b.src_ip, b.ban_id
         )
-        SELECT e.src_ip, COUNT(*) AS post_ban_events
-        FROM events AS e
-        JOIN first_ban AS b
-            ON e.src_ip = b.src_ip
-        WHERE e.timestamp > b.first_ban_time
-          AND e.source IN ('auth', 'nginx')
-        GROUP BY e.src_ip
-        ORDER BY post_ban_events DESC, e.src_ip ASC
+        SELECT
+            src_ip,
+            COUNT(*) AS return_count,
+            SUM(post_ban_events) AS post_ban_events
+        FROM returned_bans
+        GROUP BY src_ip
+        ORDER BY return_count DESC, post_ban_events DESC, src_ip ASC
         """
     )
     return cursor.fetchall()
@@ -407,22 +438,92 @@ def get_ip_post_ban_activity_count(
     connection: sqlite3.Connection,
     src_ip: str,
 ) -> int:
-    """Return count of auth/nginx events after the first ban for an IP."""
+    """Return count of auth/nginx events after ban windows for an IP."""
     cursor = connection.execute(
         """
-        WITH first_ban AS (
-            SELECT MIN(timestamp) AS first_ban_time
-            FROM events
-            WHERE src_ip = ?
-              AND event_type = 'fail2ban_ban'
+        WITH ban_windows AS (
+            SELECT
+                ban.id AS ban_id,
+                ban.timestamp AS ban_time,
+                (
+                    SELECT MIN(next_ban.timestamp)
+                    FROM events AS next_ban
+                    WHERE next_ban.src_ip = ban.src_ip
+                      AND next_ban.event_type = 'fail2ban_ban'
+                      AND next_ban.timestamp > ban.timestamp
+                ) AS next_ban_time,
+                (
+                    SELECT MIN(unban.timestamp)
+                    FROM events AS unban
+                    WHERE unban.src_ip = ban.src_ip
+                      AND unban.event_type = 'fail2ban_unban'
+                      AND unban.timestamp > ban.timestamp
+                ) AS next_unban_time
+            FROM events AS ban
+            WHERE ban.src_ip = ?
+              AND ban.event_type = 'fail2ban_ban'
+        ),
+        returned_events AS (
+            SELECT
+                DISTINCT e.id
+            FROM ban_windows AS b
+            JOIN events AS e
+                ON e.src_ip = ?
+            WHERE e.source IN ('auth', 'nginx')
+              AND e.timestamp > COALESCE(b.next_unban_time, b.ban_time)
+              AND (
+                  b.next_ban_time IS NULL
+                  OR e.timestamp < b.next_ban_time
+              )
         )
         SELECT COUNT(*) AS count
-        FROM events
-        WHERE src_ip = ?
-          AND source IN ('auth', 'nginx')
-          AND timestamp > (SELECT first_ban_time FROM first_ban)
+        FROM returned_events
         """,
         (src_ip, src_ip),
+    )
+    row = cursor.fetchone()
+    return 0 if row is None else row["count"]
+
+
+def get_ip_post_ban_return_count(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> int:
+    """Return number of ban windows after which an IP returned."""
+    cursor = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM events AS ban
+        WHERE ban.src_ip = ?
+          AND ban.event_type = 'fail2ban_ban'
+          AND EXISTS (
+              SELECT 1
+              FROM events AS e
+              WHERE e.src_ip = ban.src_ip
+                AND e.source IN ('auth', 'nginx')
+                AND e.timestamp > COALESCE(
+                    (
+                        SELECT MIN(unban.timestamp)
+                        FROM events AS unban
+                        WHERE unban.src_ip = ban.src_ip
+                          AND unban.event_type = 'fail2ban_unban'
+                          AND unban.timestamp > ban.timestamp
+                    ),
+                    ban.timestamp
+                )
+                AND e.timestamp < COALESCE(
+                    (
+                        SELECT MIN(next_ban.timestamp)
+                        FROM events AS next_ban
+                        WHERE next_ban.src_ip = ban.src_ip
+                          AND next_ban.event_type = 'fail2ban_ban'
+                          AND next_ban.timestamp > ban.timestamp
+                    ),
+                    '9999-12-31 23:59:59'
+                )
+          )
+        """,
+        (src_ip,),
     )
     row = cursor.fetchone()
     return 0 if row is None else row["count"]

@@ -10,6 +10,9 @@ from traxerax_lite.models import Event, Finding
 class DetectionState:
     """In-memory state for detections and simple correlations."""
 
+    http_error_statuses: set[int] = field(default_factory=set)
+    http_error_threshold: int = 3
+
     failed_counts: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
     )
@@ -17,8 +20,12 @@ class DetectionState:
 
     auth_activity_ips: set[str] = field(default_factory=set)
     fail2ban_banned_ips: set[str] = field(default_factory=set)
+    web_activity_ips: set[str] = field(default_factory=set)
     web_probe_ips: set[str] = field(default_factory=set)
     mail_activity_ips: set[str] = field(default_factory=set)
+    http_error_counts: dict[tuple[str, int], int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
 
     mail_failed_counts: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
@@ -26,7 +33,11 @@ class DetectionState:
     mail_threshold_alerted: set[str] = field(default_factory=set)
 
     fail2ban_alerted: set[str] = field(default_factory=set)
+    web_fail2ban_alerted: set[str] = field(default_factory=set)
     suspicious_web_alerted: set[str] = field(default_factory=set)
+    repeated_http_error_alerted: set[tuple[str, int]] = field(
+        default_factory=set
+    )
     mail_fail2ban_alerted: set[str] = field(default_factory=set)
 
     web_to_auth_alerted: set[str] = field(default_factory=set)
@@ -144,6 +155,21 @@ def _process_fail2ban_event(
                 )
             )
 
+        if ip in state.web_activity_ips and ip not in state.web_fail2ban_alerted:
+            state.web_fail2ban_alerted.add(ip)
+            findings.append(
+                Finding(
+                    finding_type="ip_banned_after_web_activity",
+                    severity="medium",
+                    message=(
+                        "IP seen in web activity was later banned by "
+                        f"fail2ban: {ip}"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+            )
+
         if ip in state.mail_activity_ips and ip not in state.mail_fail2ban_alerted:
             state.mail_fail2ban_alerted.add(ip)
             findings.append(
@@ -170,6 +196,8 @@ def _process_nginx_event(
     findings: list[Finding] = []
     ip = event.src_ip
 
+    state.web_activity_ips.add(ip)
+
     if event.event_type == "nginx_suspicious_request":
         state.web_probe_ips.add(ip)
 
@@ -182,6 +210,32 @@ def _process_nginx_event(
                     message=(
                         "Suspicious web probe detected from "
                         f"{ip} path={event.path}"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+            )
+
+    if (
+        event.status_code is not None
+        and event.status_code in state.http_error_statuses
+    ):
+        error_key = (ip, event.status_code)
+        state.http_error_counts[error_key] += 1
+
+        if (
+            state.http_error_counts[error_key] >= state.http_error_threshold
+            and error_key not in state.repeated_http_error_alerted
+        ):
+            state.repeated_http_error_alerted.add(error_key)
+            findings.append(
+                Finding(
+                    finding_type="repeated_http_error_responses",
+                    severity="medium",
+                    message=(
+                        "Repeated HTTP error responses detected from "
+                        f"{ip} (status={event.status_code}, "
+                        f"count={state.http_error_counts[error_key]})"
                     ),
                     src_ip=ip,
                     timestamp=event.timestamp,
