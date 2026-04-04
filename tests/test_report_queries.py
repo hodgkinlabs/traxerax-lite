@@ -218,5 +218,7 @@ def test_build_ip_report_includes_persistence_flags() -> None:
     assert "returned_after_ban: yes" in report
     assert "persistent_multi_source: yes" in report
     assert "root_attempt_from_repeat_ip: yes" in report
+    assert "nginx_error_status_counts:" in report
+    assert "404: 1" in report
 
     connection.close()

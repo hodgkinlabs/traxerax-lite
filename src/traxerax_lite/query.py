@@ -411,6 +411,26 @@ def get_finding_counts_by_type_for_ip(
     return cursor.fetchall()
 
 
+def get_nginx_error_status_counts_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return grouped nginx 4xx/5xx status counts for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT status_code, COUNT(*) AS count
+        FROM events
+        WHERE src_ip = ?
+          AND source = 'nginx'
+          AND status_code >= 400
+        GROUP BY status_code
+        ORDER BY count DESC, status_code ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
 def get_ip_persistence_stats(
     connection: sqlite3.Connection,
     src_ip: str,
