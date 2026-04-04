@@ -1,5 +1,6 @@
 """Main entry point."""
 
+import logging
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import load_config
@@ -11,7 +12,7 @@ from traxerax_lite.parser import (
     parse_nginx_access_line,
 )
 from traxerax_lite.report_queries import build_ip_report, build_summary_report
-from traxerax_lite.reporter import format_event, format_finding
+from traxerax_lite.reporter import format_event, format_finding, json_format_event, json_format_finding
 from traxerax_lite.storage import (
     get_connection,
     initialize_database,
@@ -25,8 +26,14 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    config = load_config()
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logger = logging.getLogger(__name__)
+
+    config = load_config(args.config)
     nginx_paths = config["nginx"]["suspicious_paths"]
+
+    event_formatter = json_format_event if args.json else format_event
+    finding_formatter = json_format_finding if args.json else format_finding
 
     connection = get_connection(args.db_path)
     initialize_database(connection)
@@ -34,13 +41,13 @@ def main() -> None:
     try:
         if args.report:
             if args.report == "summary":
-                print(build_summary_report(connection))
+                logger.info(build_summary_report(connection))
                 return
 
             if args.report == "ip":
                 if not args.ip:
                     parser.error("--report ip requires --ip")
-                print(build_ip_report(connection, args.ip))
+                logger.info(build_ip_report(connection, args.ip))
                 return
 
         if (
@@ -66,13 +73,13 @@ def main() -> None:
                     continue
 
                 parsed_count += 1
-                print(format_event(event))
+                logger.info(event_formatter(event))
                 insert_event(connection, event)
 
                 findings = process_event(event, state)
                 for finding in findings:
                     finding_count += 1
-                    print(format_finding(finding))
+                    logger.info(finding_formatter(finding))
                     insert_finding(connection, finding)
 
         if args.fail2ban_log:
@@ -82,13 +89,13 @@ def main() -> None:
                     continue
 
                 parsed_count += 1
-                print(format_event(event))
+                logger.info(event_formatter(event))
                 insert_event(connection, event)
 
                 findings = process_event(event, state)
                 for finding in findings:
                     finding_count += 1
-                    print(format_finding(finding))
+                    logger.info(finding_formatter(finding))
                     insert_finding(connection, finding)
 
         if args.nginx_log:
@@ -98,13 +105,13 @@ def main() -> None:
                     continue
 
                 parsed_count += 1
-                print(format_event(event))
+                logger.info(event_formatter(event))
                 insert_event(connection, event)
 
                 findings = process_event(event, state)
                 for finding in findings:
                     finding_count += 1
-                    print(format_finding(finding))
+                    logger.info(finding_formatter(finding))
                     insert_finding(connection, finding)
 
         if args.mail_log:
@@ -114,19 +121,19 @@ def main() -> None:
                     continue
 
                 parsed_count += 1
-                print(format_event(event))
+                logger.info(event_formatter(event))
                 insert_event(connection, event)
 
                 findings = process_event(event, state)
                 for finding in findings:
                     finding_count += 1
-                    print(format_finding(finding))
+                    logger.info(finding_formatter(finding))
                     insert_finding(connection, finding)
 
-        print("\n[SUMMARY]")
-        print(f"parsed_events={parsed_count}")
-        print(f"generated_findings={finding_count}")
-        print(f"database={args.db_path}")
+        logger.info("\n[SUMMARY]")
+        logger.info(f"parsed_events={parsed_count}")
+        logger.info(f"generated_findings={finding_count}")
+        logger.info(f"database={args.db_path}")
     finally:
         connection.close()
 

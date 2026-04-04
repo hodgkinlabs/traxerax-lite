@@ -25,6 +25,71 @@ Traxerax-lite focuses on:
 
 ---
 
+## Installation
+
+### Requirements
+
+- Python 3.10+
+- pip
+
+### Install from source
+
+```bash
+git clone https://github.com/hodgkinlabs/traxerax-lite.git
+cd traxerax-lite
+pip install -e .
+```
+
+### Development setup
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Usage
+
+### Basic log processing
+
+```bash
+# Process authentication logs
+python -m traxerax_lite.main --auth-log /var/log/auth.log
+
+# Process multiple log types
+python -m traxerax_lite.main --auth-log /var/log/auth.log --nginx-log /var/log/nginx/access.log --fail2ban-log /var/log/fail2ban.log
+
+# Process with custom config
+python -m traxerax_lite.main --config /path/to/config.yaml --auth-log /var/log/auth.log
+```
+
+### Generate reports
+
+```bash
+# Summary report
+python -m traxerax_lite.main --report summary
+
+# Per-IP investigation
+python -m traxerax_lite.main --report ip --ip 185.10.10.1
+```
+
+### Configuration
+
+The tool uses a YAML configuration file (default: `config/default.yaml`) to define suspicious paths for nginx log analysis.
+
+Example config:
+```yaml
+nginx:
+  suspicious_paths:
+    - "/wp-login.php"
+    - "/xmlrpc.php"
+    - "/.env"
+    - "/admin"
+    - "/phpmyadmin"
+```
+
+---
+
 ## Current Capabilities
 
 ### 1. Multi-Source Log Parsing
