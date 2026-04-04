@@ -210,17 +210,27 @@ def get_persistent_multi_source_ips(
     connection: sqlite3.Connection,
     min_total_events: int = 4,
 ) -> list[sqlite3.Row]:
-    """Return IPs with sustained activity across multiple sources."""
+    """Return IPs with sustained activity across non-fail2ban sources."""
     cursor = connection.execute(
         """
         SELECT
             src_ip,
-            COUNT(DISTINCT source) AS source_count,
+            COUNT(
+                DISTINCT CASE
+                    WHEN source != 'fail2ban' THEN source
+                    ELSE NULL
+                END
+            ) AS source_count,
             COUNT(*) AS total_events
         FROM events
         WHERE src_ip IS NOT NULL
         GROUP BY src_ip
-        HAVING COUNT(DISTINCT source) >= 2
+        HAVING COUNT(
+                   DISTINCT CASE
+                       WHEN source != 'fail2ban' THEN source
+                       ELSE NULL
+                   END
+               ) >= 2
            AND COUNT(*) >= ?
         ORDER BY total_events DESC, src_ip ASC
         """,
@@ -410,7 +420,12 @@ def get_ip_persistence_stats(
         """
         SELECT
             COUNT(*) AS total_events,
-            COUNT(DISTINCT source) AS source_count,
+            COUNT(
+                DISTINCT CASE
+                    WHEN source != 'fail2ban' THEN source
+                    ELSE NULL
+                END
+            ) AS source_count,
             SUM(
                 CASE WHEN event_type = 'fail2ban_ban'
                      THEN 1 ELSE 0 END

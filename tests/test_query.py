@@ -525,8 +525,70 @@ def test_get_persistent_multi_source_ips_returns_sustained_ips() -> None:
 
     assert len(rows) == 1
     assert rows[0]["src_ip"] == "185.10.10.1"
-    assert rows[0]["source_count"] == 3
+    assert rows[0]["source_count"] == 2
     assert rows[0]["total_events"] == 4
+
+    connection.close()
+
+
+def test_get_persistent_multi_source_ips_excludes_fail2ban_only_overlap() -> None:
+    """Fail2ban plus one primary source should not count as multi-source."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    events = [
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 1),
+            source="nginx",
+            event_type="nginx_request",
+            raw="probe1",
+            src_ip="185.10.10.1",
+            service="nginx",
+            process="nginx",
+            method="GET",
+            path="/missing",
+            status_code=404,
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 1, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban1",
+            src_ip="185.10.10.1",
+            service="nginx-badbots",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 2, 1),
+            source="fail2ban",
+            event_type="fail2ban_unban",
+            raw="unban1",
+            src_ip="185.10.10.1",
+            service="nginx-badbots",
+            process="fail2ban",
+            action="unban",
+            jail="actions",
+        ),
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 3, 1),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban2",
+            src_ip="185.10.10.1",
+            service="nginx-badbots",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+    ]
+    for event in events:
+        insert_event(connection, event)
+
+    rows = get_persistent_multi_source_ips(connection)
+
+    assert rows == []
 
     connection.close()
 
@@ -668,7 +730,7 @@ def test_get_ip_persistence_stats_returns_aggregate_stats() -> None:
 
     assert row is not None
     assert row["total_events"] == 3
-    assert row["source_count"] == 2
+    assert row["source_count"] == 1
     assert row["ban_count"] == 1
     assert row["root_attempt_count"] == 1
     assert row["auth_event_count"] == 2

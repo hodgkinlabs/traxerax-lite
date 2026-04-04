@@ -209,7 +209,7 @@ def test_build_ip_report_includes_persistence_flags() -> None:
 
     assert "[REPORT] ip=185.10.10.1" in report
     assert "persistence_flags:" in report
-    assert "source_count: 3" in report
+    assert "source_count: 2" in report
     assert "ban_count: 1" in report
     assert "root_attempt_count: 1" in report
     assert "auth_event_count: 3" in report
