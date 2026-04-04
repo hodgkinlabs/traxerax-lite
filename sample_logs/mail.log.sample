@@ -1,4 +1,13 @@
+Mar 25 10:10:30 debian dovecot: imap-login: Login: user=<ops>, method=PLAIN, rip=192.0.2.55, lip=203.0.113.10, mpid=4100, TLS, session=<ops001>
 Mar 25 10:11:40 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 2 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<abc123>
 Mar 25 10:11:50 debian submission/smtpd[3101]: warning: unknown[198.51.100.20]: SASL LOGIN authentication failed: authentication failure
 Mar 25 10:12:00 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<def456>
+Mar 25 10:12:20 debian submission/smtpd[3102]: warning: unknown[203.0.113.88]: SASL PLAIN authentication failed: authentication failure
+Mar 25 10:18:18 debian dovecot: pop3-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<alerts>, method=PLAIN, rip=185.10.10.1, lip=203.0.113.10, TLS, session=<pop111>
+Mar 25 10:18:20 debian submission/smtpd[3103]: warning: unknown[185.10.10.1]: SASL LOGIN authentication failed: authentication failure
+Mar 25 10:18:24 debian dovecot: pop3-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<alerts>, method=PLAIN, rip=185.10.10.1, lip=203.0.113.10, TLS, session=<pop222>
 Mar 25 10:30:00 debian dovecot: imap-login: Login: user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, mpid=4201, TLS, session=<ghi789>
+Mar 25 10:34:00 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<ghi790>
+Mar 25 10:34:03 debian submission/smtpd[3104]: warning: unknown[198.51.100.20]: SASL LOGIN authentication failed: authentication failure
+Mar 25 10:34:10 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<ghi791>
+Mar 25 10:40:00 debian dovecot: imap-login: Login: user=<admin>, method=PLAIN, rip=198.18.0.10, lip=203.0.113.10, mpid=4300, TLS, session=<good001>

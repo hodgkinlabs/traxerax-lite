@@ -80,6 +80,19 @@ The tool uses a YAML configuration file (default: `config/default.yaml`) to defi
 Example config:
 ```yaml
 nginx:
+  repeated_error_threshold: 3
+  error_status_codes:
+    - 400
+    - 401
+    - 403
+    - 404
+    - 408
+    - 429
+    - 444
+    - 500
+    - 502
+    - 503
+    - 504
   suspicious_paths:
     - "/wp-login.php"
     - "/xmlrpc.php"
@@ -108,6 +121,7 @@ Traxerax-lite currently supports:
 - **nginx access logs**
   - regular requests
   - suspicious requests based on configured paths
+  - repeated configured HTTP error responses
 
 - **mail authentication logs**
   - Dovecot failed logins
@@ -134,6 +148,9 @@ The current detection engine supports:
 - **Suspicious Web Probe**
   - nginx request to configured suspicious paths
 
+- **Repeated HTTP Error Responses**
+  - repeated configured nginx `4xx`/`5xx` responses from the same IP
+
 - **Repeated Mail Auth Failures**
   - repeated Dovecot/Postfix authentication failures from the same IP
 
@@ -145,6 +162,9 @@ The current detection engine supports:
 
 - **IP Banned After Mail Activity**
   - fail2ban ban following prior mail auth activity from the same IP
+
+- **IP Banned After Web Activity**
+  - fail2ban ban following prior nginx activity from the same IP
 
 - **Web Probe Followed by Auth Activity**
   - suspicious nginx activity plus SSH/auth activity from the same IP
