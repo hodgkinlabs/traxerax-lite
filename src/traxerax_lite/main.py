@@ -6,7 +6,11 @@ from typing import Callable
 
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
-from traxerax_lite.config import load_config, load_detection_settings
+from traxerax_lite.config import (
+    load_config,
+    load_detection_settings,
+    load_report_settings,
+)
 from traxerax_lite.detector import (
     DetectionState,
     process_enforcement_action,
@@ -47,6 +51,7 @@ def main() -> None:
 
     config = load_config(args.config)
     detection_settings = load_detection_settings(config)
+    report_settings = load_report_settings(config)
     nginx_config = config.get("nginx", {})
     nginx_paths = nginx_config.get("suspicious_paths", [])
     local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
@@ -65,13 +70,13 @@ def main() -> None:
     try:
         if args.report:
             if args.report == "summary":
-                logger.info(build_summary_report(connection))
+                logger.info(build_summary_report(connection, report_settings))
                 return
 
             if args.report == "ip":
                 if not args.ip:
                     parser.error("--report ip requires --ip")
-                logger.info(build_ip_report(connection, args.ip))
+                logger.info(build_ip_report(connection, args.ip, report_settings))
                 return
 
         if (

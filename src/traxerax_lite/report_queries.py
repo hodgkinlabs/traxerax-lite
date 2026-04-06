@@ -3,6 +3,7 @@
 import sqlite3
 from datetime import datetime
 
+from traxerax_lite.config import ReportSettings
 from traxerax_lite.query import (
     get_enforcement_actions_for_ip,
     get_event_counts_by_source_for_ip,
@@ -31,20 +32,44 @@ from traxerax_lite.query import (
 )
 
 
-def build_summary_report(connection: sqlite3.Connection) -> str:
+def build_summary_report(
+    connection: sqlite3.Connection,
+    settings: ReportSettings | None = None,
+) -> str:
     """Build a human-readable summary report from stored data."""
+    if settings is None:
+        settings = ReportSettings()
+
     event_counts = get_event_counts_by_type(connection)
     finding_counts = get_finding_counts_by_type(connection)
-    top_event_ips = get_top_event_source_ips(connection)
-    top_finding_ips = get_top_finding_source_ips(connection)
+    top_event_ips = get_top_event_source_ips(
+        connection,
+        limit=settings.top_event_source_ips_limit,
+    )
+    top_finding_ips = get_top_finding_source_ips(
+        connection,
+        limit=settings.top_finding_source_ips_limit,
+    )
     auth_enforced_ips = get_ips_seen_in_auth_and_fail2ban(connection)
     root_then_ban_ips = get_ips_with_root_attempt_and_ban(connection)
-    top_ips_by_finding_count = get_top_ips_by_finding_count(connection)
+    top_ips_by_finding_count = get_top_ips_by_finding_count(
+        connection,
+        limit=settings.top_ips_by_finding_count_limit,
+    )
 
-    repeat_banned_ips = get_repeat_banned_ips(connection)
+    repeat_banned_ips = get_repeat_banned_ips(
+        connection,
+        min_bans=settings.repeat_banned_min_bans,
+    )
     returned_after_ban_ips = get_returned_after_ban_ips(connection)
-    persistent_multi_source_ips = get_persistent_multi_source_ips(connection)
-    root_attempt_repeat_ips = get_root_attempt_ips_with_repeat_activity(connection)
+    persistent_multi_source_ips = get_persistent_multi_source_ips(
+        connection,
+        min_total_events=settings.persistent_multi_source_min_total_events,
+    )
+    root_attempt_repeat_ips = get_root_attempt_ips_with_repeat_activity(
+        connection,
+        min_auth_events=settings.root_attempt_repeat_min_auth_events,
+    )
 
     lines: list[str] = []
     lines.append("[REPORT] summary")
@@ -117,11 +142,14 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     lines.append("returned_after_ban_ips:")
     if returned_after_ban_ips:
         for row in returned_after_ban_ips:
-            lines.append(
-                f"  - {row['src_ip']}: "
-                f"returns={row['return_count']} "
-                f"events={row['post_ban_events']}"
-            )
+            if row["return_count"] >= settings.returned_after_ban_min_returns:
+                lines.append(
+                    f"  - {row['src_ip']}: "
+                    f"returns={row['return_count']} "
+                    f"events={row['post_ban_events']}"
+                )
+        if lines[-1] == "returned_after_ban_ips:":
+            lines.append("  - none")
     else:
         lines.append("  - none")
 
@@ -129,11 +157,14 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     lines.append("persistent_multi_source_ips:")
     if persistent_multi_source_ips:
         for row in persistent_multi_source_ips:
-            lines.append(
-                f"  - {row['src_ip']}: "
-                f"events={row['total_events']} "
-                f"sources={row['source_count']}"
-            )
+            if row["source_count"] >= settings.persistent_multi_source_min_sources:
+                lines.append(
+                    f"  - {row['src_ip']}: "
+                    f"events={row['total_events']} "
+                    f"sources={row['source_count']}"
+                )
+        if lines[-1] == "persistent_multi_source_ips:":
+            lines.append("  - none")
     else:
         lines.append("  - none")
 
@@ -155,8 +186,12 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
 def build_ip_report(
     connection: sqlite3.Connection,
     src_ip: str,
+    settings: ReportSettings | None = None,
 ) -> str:
     """Build a timeline-style report for a single IP address."""
+    if settings is None:
+        settings = ReportSettings()
+
     overview = get_ip_overview(connection, src_ip)
     total_findings = get_ip_total_findings(connection, src_ip)
     source_counts = get_event_counts_by_source_for_ip(connection, src_ip)
@@ -224,15 +259,22 @@ def build_ip_report(
     lines.append("")
     lines.append("persistence_flags:")
     if persistence_stats is not None:
-        repeat_banned = persistence_stats["ban_count"] >= 2
-        returned_after_ban = post_ban_return_count >= 1
+        repeat_banned = (
+            persistence_stats["ban_count"] >= settings.repeat_banned_min_bans
+        )
+        returned_after_ban = (
+            post_ban_return_count >= settings.returned_after_ban_min_returns
+        )
         persistent_multi_source = (
-            persistence_stats["source_count"] >= 2
-            and persistence_stats["total_events"] >= 4
+            persistence_stats["source_count"]
+            >= settings.persistent_multi_source_min_sources
+            and persistence_stats["total_events"]
+            >= settings.persistent_multi_source_min_total_events
         )
         root_attempt_from_repeat_ip = (
             persistence_stats["root_attempt_count"] >= 1
-            and persistence_stats["auth_event_count"] >= 3
+            and persistence_stats["auth_event_count"]
+            >= settings.root_attempt_repeat_min_auth_events
         )
 
         lines.append(f"  - source_count: {persistence_stats['source_count']}")

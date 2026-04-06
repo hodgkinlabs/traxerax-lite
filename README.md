@@ -92,6 +92,18 @@ detection:
     success_after_failures: high
     suspicious_web_probe: medium
 
+reporting:
+  limits:
+    top_event_source_ips: 5
+    top_finding_source_ips: 5
+    top_ips_by_finding_count: 5
+  persistence:
+    repeat_banned_min_bans: 2
+    persistent_multi_source_min_sources: 2
+    persistent_multi_source_min_total_events: 4
+    root_attempt_repeat_min_auth_events: 3
+    returned_after_ban_min_returns: 1
+
 nginx:
   error_status_codes:
     - 400
@@ -118,6 +130,10 @@ nginx:
 `detection.severities` overrides the emitted severity per finding type.
 For backward compatibility, `nginx.repeated_error_threshold` is still honored
 when `detection.thresholds.repeated_http_error` is not set.
+
+`reporting.limits` controls how many “top” IPs appear in summary reports, and
+`reporting.persistence` controls the cutoffs used for persistence-oriented
+summary sections and IP-level flags.
 
 ---
 

@@ -1,10 +1,14 @@
 """Integration tests for main functionality."""
 
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
+from traxerax_lite.config import load_config, load_report_settings
+from traxerax_lite.models import Event
 from traxerax_lite.main import main
-from traxerax_lite.storage import get_connection
+from traxerax_lite.report_queries import build_ip_report
+from traxerax_lite.storage import get_connection, initialize_database, insert_event
 
 
 def test_main_processing_with_sample_logs(capsys):
@@ -170,3 +174,59 @@ nginx:
 
         assert finding is not None
         assert finding[1] == "low"
+
+
+def test_reporting_settings_loaded_from_config_affect_ip_report() -> None:
+    """Loaded reporting settings should affect generated IP report output."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        config_path = Path(tmpdir) / "config.yaml"
+
+        config_path.write_text(
+            """
+reporting:
+  persistence:
+    repeat_banned_min_bans: 1
+nginx:
+  suspicious_paths:
+    - "/wp-login.php"
+"""
+        )
+
+        conn = get_connection(str(db_path))
+        initialize_database(conn)
+        insert_event(
+            conn,
+            Event(
+                timestamp=datetime(2026, 3, 25, 10, 0, 1),
+                source="auth",
+                event_type="ssh_failed_login",
+                raw="auth1",
+                src_ip="185.10.10.1",
+                service="ssh",
+                process="sshd",
+            ),
+        )
+        insert_event(
+            conn,
+            Event(
+                timestamp=datetime(2026, 3, 25, 10, 1, 1),
+                source="fail2ban",
+                event_type="fail2ban_ban",
+                raw="ban1",
+                src_ip="185.10.10.1",
+                service="sshd",
+                process="fail2ban",
+                action="ban",
+                jail="actions",
+            ),
+        )
+        conn.close()
+
+        settings = load_report_settings(load_config(str(config_path)))
+
+        conn = get_connection(str(db_path))
+        report = build_ip_report(conn, "185.10.10.1", settings)
+        conn.close()
+
+        assert "repeat_banned: yes" in report

@@ -59,6 +59,20 @@ class DetectionSettings:
     )
 
 
+@dataclass(slots=True)
+class ReportSettings:
+    """Normalized report settings derived from YAML config."""
+
+    top_event_source_ips_limit: int = 5
+    top_finding_source_ips_limit: int = 5
+    top_ips_by_finding_count_limit: int = 5
+    repeat_banned_min_bans: int = 2
+    persistent_multi_source_min_sources: int = 2
+    persistent_multi_source_min_total_events: int = 4
+    root_attempt_repeat_min_auth_events: int = 3
+    returned_after_ban_min_returns: int = 1
+
+
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     """Load YAML config file."""
     config_path = Path(path)
@@ -119,6 +133,40 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
         )
 
     return settings
+
+
+def load_report_settings(config: dict[str, Any]) -> ReportSettings:
+    """Return normalized report settings with defaults applied."""
+    report_config = _as_dict(config.get("reporting"))
+    limits = _as_dict(report_config.get("limits"))
+    persistence = _as_dict(report_config.get("persistence"))
+
+    return ReportSettings(
+        top_event_source_ips_limit=int(
+            limits.get("top_event_source_ips", 5)
+        ),
+        top_finding_source_ips_limit=int(
+            limits.get("top_finding_source_ips", 5)
+        ),
+        top_ips_by_finding_count_limit=int(
+            limits.get("top_ips_by_finding_count", 5)
+        ),
+        repeat_banned_min_bans=int(
+            persistence.get("repeat_banned_min_bans", 2)
+        ),
+        persistent_multi_source_min_sources=int(
+            persistence.get("persistent_multi_source_min_sources", 2)
+        ),
+        persistent_multi_source_min_total_events=int(
+            persistence.get("persistent_multi_source_min_total_events", 4)
+        ),
+        root_attempt_repeat_min_auth_events=int(
+            persistence.get("root_attempt_repeat_min_auth_events", 3)
+        ),
+        returned_after_ban_min_returns=int(
+            persistence.get("returned_after_ban_min_returns", 1)
+        ),
+    )
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
