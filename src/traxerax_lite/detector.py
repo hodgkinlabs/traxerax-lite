@@ -4,6 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from traxerax_lite.config import DetectionSettings
 from traxerax_lite.models import EnforcementAction, Event, Finding
 
 
@@ -11,8 +12,16 @@ from traxerax_lite.models import EnforcementAction, Event, Finding
 class DetectionState:
     """In-memory state for detections and simple correlations."""
 
+    auth_failed_login_threshold: int = 3
+    mail_failed_login_threshold: int = 3
     http_error_statuses: set[int] = field(default_factory=set)
     http_error_threshold: int = 3
+    enabled_rules: dict[str, bool] = field(
+        default_factory=DetectionSettings().enabled_rules.copy
+    )
+    finding_severities: dict[str, str] = field(
+        default_factory=DetectionSettings().finding_severities.copy
+    )
 
     failed_counts: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
@@ -47,6 +56,18 @@ class DetectionState:
     web_to_auth_alerted: set[str] = field(default_factory=set)
     web_to_ban_alerted: set[str] = field(default_factory=set)
     multi_source_alerted: set[str] = field(default_factory=set)
+
+    @classmethod
+    def from_settings(cls, settings: DetectionSettings) -> "DetectionState":
+        """Build detection state from normalized config settings."""
+        return cls(
+            auth_failed_login_threshold=settings.auth_failed_login_threshold,
+            mail_failed_login_threshold=settings.mail_failed_login_threshold,
+            http_error_statuses=set(settings.http_error_statuses),
+            http_error_threshold=settings.http_error_threshold,
+            enabled_rules=dict(settings.enabled_rules),
+            finding_severities=dict(settings.finding_severities),
+        )
 
 
 def process_event(event: Event, state: DetectionState) -> list[Finding]:
@@ -96,52 +117,52 @@ def _process_auth_event(
     state.first_auth_activity_time.setdefault(ip, event.timestamp)
 
     if event.event_type == "ssh_root_login_attempt":
-        findings.append(
-            Finding(
-                finding_type="root_login_attempt",
-                severity="medium",
-                message=f"Root login attempt detected from {ip}",
-                src_ip=ip,
-                timestamp=event.timestamp,
-            )
+        finding = _make_finding(
+            state=state,
+            finding_type="root_login_attempt",
+            message=f"Root login attempt detected from {ip}",
+            src_ip=ip,
+            timestamp=event.timestamp,
         )
+        if finding is not None:
+            findings.append(finding)
 
     if event.event_type in {"ssh_failed_login", "ssh_root_login_attempt"}:
         state.failed_counts[ip] += 1
 
         if (
-            state.failed_counts[ip] >= 3
+            state.failed_counts[ip] >= state.auth_failed_login_threshold
             and ip not in state.threshold_alerted
         ):
             state.threshold_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="repeated_failed_login",
-                    severity="medium",
-                    message=(
-                        "Repeated failed SSH logins detected from "
-                        f"{ip} ({state.failed_counts[ip]} failures)"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="repeated_failed_login",
+                message=(
+                    "Repeated failed SSH logins detected from "
+                    f"{ip} ({state.failed_counts[ip]} failures)"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     if event.event_type == "ssh_success_login":
         prior_failures = state.failed_counts[ip]
         if prior_failures >= 1:
-            findings.append(
-                Finding(
-                    finding_type="success_after_failures",
-                    severity="high",
-                    message=(
-                        "Successful SSH login after prior failures from "
-                        f"{ip} ({prior_failures} failures before success)"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="success_after_failures",
+                message=(
+                    "Successful SSH login after prior failures from "
+                    f"{ip} ({prior_failures} failures before success)"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
 
@@ -160,48 +181,48 @@ def _process_fail2ban_action(
 
         if ip in state.auth_activity_ips and ip not in state.auth_enforcement_alerted:
             state.auth_enforcement_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="ip_banned_after_auth_activity",
-                    severity="medium",
-                    message=(
-                        "IP seen in auth activity was later banned by "
-                        f"fail2ban: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=action.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="ip_banned_after_auth_activity",
+                message=(
+                    "IP seen in auth activity was later banned by "
+                    f"fail2ban: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=action.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
         if ip in state.web_activity_ips and ip not in state.web_enforcement_alerted:
             state.web_enforcement_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="ip_banned_after_web_activity",
-                    severity="medium",
-                    message=(
-                        "IP seen in web activity was later banned by "
-                        f"fail2ban: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=action.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="ip_banned_after_web_activity",
+                message=(
+                    "IP seen in web activity was later banned by "
+                    f"fail2ban: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=action.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
         if ip in state.mail_activity_ips and ip not in state.mail_fail2ban_alerted:
             state.mail_fail2ban_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="ip_banned_after_mail_activity",
-                    severity="medium",
-                    message=(
-                        "IP seen in mail auth activity was later banned by "
-                        f"fail2ban: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=action.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="ip_banned_after_mail_activity",
+                message=(
+                    "IP seen in mail auth activity was later banned by "
+                    f"fail2ban: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=action.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
 
@@ -222,18 +243,18 @@ def _process_nginx_event(
 
         if ip not in state.suspicious_web_alerted:
             state.suspicious_web_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="suspicious_web_probe",
-                    severity="medium",
-                    message=(
-                        "Suspicious web probe detected from "
-                        f"{ip} path={event.path}"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="suspicious_web_probe",
+                message=(
+                    "Suspicious web probe detected from "
+                    f"{ip} path={event.path}"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     if (
         event.status_code is not None
@@ -247,19 +268,19 @@ def _process_nginx_event(
             and error_key not in state.repeated_http_error_alerted
         ):
             state.repeated_http_error_alerted.add(error_key)
-            findings.append(
-                Finding(
-                    finding_type="repeated_http_error_responses",
-                    severity="medium",
-                    message=(
-                        "Repeated HTTP error responses detected from "
-                        f"{ip} (status={event.status_code}, "
-                        f"threshold={state.http_error_threshold})"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="repeated_http_error_responses",
+                message=(
+                    "Repeated HTTP error responses detected from "
+                    f"{ip} (status={event.status_code}, "
+                    f"threshold={state.http_error_threshold})"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
 
@@ -281,38 +302,38 @@ def _process_mail_event(
         state.mail_failed_counts[ip] += 1
 
         if (
-            state.mail_failed_counts[ip] >= 3
+            state.mail_failed_counts[ip] >= state.mail_failed_login_threshold
             and ip not in state.mail_threshold_alerted
         ):
             state.mail_threshold_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="repeated_mail_auth_failures",
-                    severity="medium",
-                    message=(
-                        "Repeated mail authentication failures detected "
-                        f"from {ip} ({state.mail_failed_counts[ip]} failures)"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="repeated_mail_auth_failures",
+                message=(
+                    "Repeated mail authentication failures detected "
+                    f"from {ip} ({state.mail_failed_counts[ip]} failures)"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     if event.event_type == "dovecot_success_login":
         prior_failures = state.mail_failed_counts[ip]
         if prior_failures >= 1:
-            findings.append(
-                Finding(
-                    finding_type="mail_success_after_failures",
-                    severity="high",
-                    message=(
-                        "Successful mail login after prior failures from "
-                        f"{ip} ({prior_failures} failures before success)"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="mail_success_after_failures",
+                message=(
+                    "Successful mail login after prior failures from "
+                    f"{ip} ({prior_failures} failures before success)"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
 
@@ -334,18 +355,18 @@ def _check_cross_source_correlations(
     ):
         if ip not in state.web_to_auth_alerted:
             state.web_to_auth_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="web_probe_followed_by_auth_activity",
-                    severity="medium",
-                    message=(
-                        "IP performed suspicious web probing and also "
-                        f"showed auth activity: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="web_probe_followed_by_auth_activity",
+                message=(
+                    "IP performed suspicious web probing and also "
+                    f"showed auth activity: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     if (
         event.source == "fail2ban"
@@ -355,18 +376,18 @@ def _check_cross_source_correlations(
     ):
         if ip not in state.web_to_ban_alerted:
             state.web_to_ban_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="web_probe_followed_by_fail2ban_ban",
-                    severity="medium",
-                    message=(
-                        "IP performed suspicious web probing and was later "
-                        f"banned by fail2ban: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="web_probe_followed_by_fail2ban_ban",
+                message=(
+                    "IP performed suspicious web probing and was later "
+                    f"banned by fail2ban: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     observed_sources = 0
     if ip in state.web_activity_ips:
@@ -379,18 +400,18 @@ def _check_cross_source_correlations(
     if observed_sources >= 2:
         if ip not in state.multi_source_alerted:
             state.multi_source_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="multi_source_ip_activity",
-                    severity="high",
-                    message=(
-                        "IP appeared across multiple observed sources: "
-                        f"{ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=event.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="multi_source_ip_activity",
+                message=(
+                    "IP appeared across multiple observed sources: "
+                    f"{ip}"
+                ),
+                src_ip=ip,
+                timestamp=event.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
 
@@ -412,17 +433,37 @@ def _check_enforcement_correlations(
     ):
         if ip not in state.web_to_ban_alerted:
             state.web_to_ban_alerted.add(ip)
-            findings.append(
-                Finding(
-                    finding_type="web_probe_followed_by_fail2ban_ban",
-                    severity="medium",
-                    message=(
-                        "IP performed suspicious web probing and was later "
-                        f"banned by fail2ban: {ip}"
-                    ),
-                    src_ip=ip,
-                    timestamp=action.timestamp,
-                )
+            finding = _make_finding(
+                state=state,
+                finding_type="web_probe_followed_by_fail2ban_ban",
+                message=(
+                    "IP performed suspicious web probing and was later "
+                    f"banned by fail2ban: {ip}"
+                ),
+                src_ip=ip,
+                timestamp=action.timestamp,
             )
+            if finding is not None:
+                findings.append(finding)
 
     return findings
+
+
+def _make_finding(
+    state: DetectionState,
+    finding_type: str,
+    message: str,
+    src_ip: str,
+    timestamp: datetime,
+) -> Finding | None:
+    """Build a finding unless the rule is disabled."""
+    if not state.enabled_rules.get(finding_type, True):
+        return None
+
+    return Finding(
+        finding_type=finding_type,
+        severity=state.finding_severities.get(finding_type, "medium"),
+        message=message,
+        src_ip=src_ip,
+        timestamp=timestamp,
+    )

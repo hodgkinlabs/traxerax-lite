@@ -79,8 +79,20 @@ The tool uses a YAML configuration file (default: `config/default.yaml`) to defi
 
 Example config:
 ```yaml
+detection:
+  thresholds:
+    auth_failed_login: 3
+    mail_failed_login: 3
+    repeated_http_error: 3
+  rules:
+    repeated_failed_login: true
+    suspicious_web_probe: true
+    multi_source_ip_activity: true
+  severities:
+    success_after_failures: high
+    suspicious_web_probe: medium
+
 nginx:
-  repeated_error_threshold: 3
   error_status_codes:
     - 400
     - 401
@@ -100,6 +112,12 @@ nginx:
     - "/admin"
     - "/phpmyadmin"
 ```
+
+`detection.thresholds` controls when threshold-based findings trigger,
+`detection.rules` enables or disables individual findings, and
+`detection.severities` overrides the emitted severity per finding type.
+For backward compatibility, `nginx.repeated_error_threshold` is still honored
+when `detection.thresholds.repeated_http_error` is not set.
 
 ---
 

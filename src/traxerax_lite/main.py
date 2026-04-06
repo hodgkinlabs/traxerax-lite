@@ -6,7 +6,7 @@ from typing import Callable
 
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
-from traxerax_lite.config import load_config
+from traxerax_lite.config import load_config, load_detection_settings
 from traxerax_lite.detector import (
     DetectionState,
     process_enforcement_action,
@@ -46,17 +46,9 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     config = load_config(args.config)
+    detection_settings = load_detection_settings(config)
     nginx_config = config.get("nginx", {})
     nginx_paths = nginx_config.get("suspicious_paths", [])
-    http_error_statuses = set(
-        nginx_config.get(
-            "error_status_codes",
-            [400, 401, 403, 404, 408, 429, 444, 500, 502, 503, 504],
-        )
-    )
-    http_error_threshold = int(
-        nginx_config.get("repeated_error_threshold", 3)
-    )
     local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
 
     event_formatter = json_format_event if args.json else format_event
@@ -94,10 +86,7 @@ def main() -> None:
                 "or use --report"
             )
 
-        state = DetectionState(
-            http_error_statuses=http_error_statuses,
-            http_error_threshold=http_error_threshold,
-        )
+        state = DetectionState.from_settings(detection_settings)
         parsed_count = 0
         finding_count = 0
 

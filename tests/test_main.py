@@ -102,3 +102,71 @@ nginx:
 
         finding_types = {row[0] for row in findings}
         assert "web_probe_followed_by_fail2ban_ban" not in finding_types
+
+
+def test_main_uses_detection_thresholds_and_severities_from_config() -> None:
+    """Configured detection settings should affect persisted findings."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        config_path = Path(tmpdir) / "config.yaml"
+        auth_log = Path(tmpdir) / "auth.log"
+
+        config_path.write_text(
+            """
+detection:
+  thresholds:
+    auth_failed_login: 2
+  severities:
+    repeated_failed_login: low
+nginx:
+  suspicious_paths:
+    - "/wp-login.php"
+"""
+        )
+        auth_log.write_text(
+            "\n".join(
+                [
+                    (
+                        "Mar 25 10:00:01 debian sshd[2001]: Failed password for "
+                        "invalid user admin from 185.10.10.1 port 40001 ssh2"
+                    ),
+                    (
+                        "Mar 25 10:00:02 debian sshd[2002]: Failed password for "
+                        "invalid user test from 185.10.10.1 port 40002 ssh2"
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--config",
+                str(config_path),
+                "--db-path",
+                str(db_path),
+                "--auth-log",
+                str(auth_log),
+                "--year",
+                "2026",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        finding = conn.execute(
+            """
+            SELECT finding_type, severity
+            FROM findings
+            WHERE finding_type = 'repeated_failed_login'
+            """
+        ).fetchone()
+        conn.close()
+
+        assert finding is not None
+        assert finding[1] == "low"
