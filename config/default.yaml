@@ -32,6 +32,18 @@ detection:
     web_probe_followed_by_fail2ban_ban: medium
     multi_source_ip_activity: high
 
+reporting:
+  limits:
+    top_event_source_ips: 5
+    top_finding_source_ips: 5
+    top_ips_by_finding_count: 5
+  persistence:
+    repeat_banned_min_bans: 2
+    persistent_multi_source_min_sources: 2
+    persistent_multi_source_min_total_events: 4
+    root_attempt_repeat_min_auth_events: 3
+    returned_after_ban_min_returns: 1
+
 nginx:
   repeated_error_threshold: 3
   error_status_codes:
