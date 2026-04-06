@@ -113,6 +113,7 @@ def test_build_summary_report_includes_persistence_sections() -> None:
     report = build_summary_report(connection)
 
     assert "[REPORT] summary" in report
+    assert "priority_incidents:" in report
     assert "repeat_banned_ips:" in report
     assert "returned_after_ban_ips:" in report
     assert "persistent_multi_source_ips:" in report
@@ -359,6 +360,153 @@ def test_build_summary_report_respects_configurable_limits_and_cutoffs() -> None
     assert "persistent_multi_source_ips:" in report
     assert "203.0.113.12: events=5 sources=2" in report
     assert "203.0.113.11: events=3 sources=2" not in report
+
+    connection.close()
+
+
+def test_build_summary_report_prioritizes_incidents_from_configured_weights() -> None:
+    """Incident scoring should reorder summary priorities based on config."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    risky_ip = "203.0.113.10"
+    noisy_ip = "203.0.113.11"
+
+    for second in range(3):
+        insert_event(
+            connection,
+            Event(
+                timestamp=datetime(2026, 3, 25, 10, 0, second),
+                source="auth",
+                event_type="ssh_failed_login",
+                raw=f"auth-risk-{second}",
+                src_ip=risky_ip,
+                service="ssh",
+                process="sshd",
+            ),
+        )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 10),
+            source="auth",
+            event_type="ssh_root_login_attempt",
+            raw="root-risk",
+            src_ip=risky_ip,
+            username="root",
+            service="ssh",
+            process="sshd",
+        ),
+    )
+    insert_event(
+        connection,
+        Event(
+            timestamp=datetime(2026, 3, 25, 10, 0, 20),
+            source="fail2ban",
+            event_type="fail2ban_ban",
+            raw="ban-risk",
+            src_ip=risky_ip,
+            service="sshd",
+            process="fail2ban",
+            action="ban",
+            jail="actions",
+        ),
+    )
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="success_after_failures",
+            severity="high",
+            message="High severity auth compromise signal",
+            src_ip=risky_ip,
+            timestamp=datetime(2026, 3, 25, 10, 0, 30),
+        ),
+    )
+
+    for second in range(8):
+        insert_event(
+            connection,
+            Event(
+                timestamp=datetime(2026, 3, 25, 11, 0, second),
+                source="nginx",
+                event_type="nginx_request",
+                raw=f"nginx-noisy-{second}",
+                src_ip=noisy_ip,
+                service="nginx",
+                process="nginx",
+                method="GET",
+                path="/missing",
+                status_code=404,
+            ),
+        )
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="repeated_http_error_responses",
+            severity="low",
+            message="Low severity noisy scanning",
+            src_ip=noisy_ip,
+            timestamp=datetime(2026, 3, 25, 11, 0, 20),
+        ),
+    )
+
+    report = build_summary_report(
+        connection,
+        ReportSettings(
+            priority_incidents_limit=2,
+            priority_weight_total_events=0,
+            priority_weight_ban_count=1,
+            priority_weight_root_attempt_repeat_ip=5,
+            priority_severity_weights={
+                "low": 1,
+                "medium": 2,
+                "high": 6,
+                "critical": 10,
+            },
+        ),
+    )
+
+    priority_section = report.split("priority_incidents:\n", 1)[1].split(
+        "\n\ntop_event_source_ips:",
+        1,
+    )[0]
+    priority_lines = [
+        line.strip()
+        for line in priority_section.splitlines()
+        if line.strip().startswith("- ")
+    ]
+
+    assert priority_lines
+    assert risky_ip in priority_lines[0]
+    assert "score=" in priority_lines[0]
+    assert "highx1" in priority_lines[0]
+    assert "bans=1" in priority_lines[0]
+
+    connection.close()
+
+
+def test_build_summary_report_can_disable_priority_incidents_section() -> None:
+    """Priority incidents section should be suppressible from config."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    insert_finding(
+        connection,
+        Finding(
+            finding_type="multi_source_ip_activity",
+            severity="high",
+            message="Appeared across three sources",
+            src_ip="185.10.10.1",
+            timestamp=datetime(2026, 3, 25, 10, 3, 1),
+        ),
+    )
+
+    report = build_summary_report(
+        connection,
+        ReportSettings(priority_incidents_enabled=False),
+    )
+
+    assert "priority_incidents:\n  - none" in report
 
     connection.close()
 

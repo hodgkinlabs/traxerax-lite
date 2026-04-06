@@ -43,6 +43,23 @@ reporting:
     persistent_multi_source_min_total_events: 4
     root_attempt_repeat_min_auth_events: 3
     returned_after_ban_min_returns: 1
+  incident_priority:
+    enabled: true
+    limit: 5
+    minimum_score: 1
+    weights:
+      severity:
+        low: 1
+        medium: 2
+        high: 4
+        critical: 6
+      total_findings: 0
+      total_events: 0
+      ban_count: 1
+      repeat_banned: 3
+      returned_after_ban: 4
+      persistent_multi_source: 3
+      root_attempt_repeat_ip: 3
 
 nginx:
   repeated_error_threshold: 3
