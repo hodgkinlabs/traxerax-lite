@@ -143,6 +143,74 @@ def test_repeated_http_errors_generate_finding() -> None:
     assert "repeated_http_error_responses" in finding_types
 
 
+def test_repeated_failed_login_respects_custom_threshold() -> None:
+    """SSH failure threshold should be configurable."""
+    state = DetectionState(auth_failed_login_threshold=2)
+    ip = "185.10.10.1"
+
+    process_event(
+        make_event("ssh_failed_login", ip, datetime(2026, 3, 25, 10, 0, 1), "admin"),
+        state,
+    )
+    findings = process_event(
+        make_event("ssh_failed_login", ip, datetime(2026, 3, 25, 10, 0, 2), "test"),
+        state,
+    )
+
+    assert any(
+        finding.finding_type == "repeated_failed_login"
+        for finding in findings
+    )
+
+
+def test_rule_can_be_disabled_in_detection_state() -> None:
+    """Disabled rules should suppress their findings."""
+    state = DetectionState(
+        enabled_rules={"suspicious_web_probe": False},
+    )
+
+    findings = process_event(
+        make_event(
+            "nginx_suspicious_request",
+            "185.10.10.1",
+            datetime(2026, 3, 25, 10, 0, 4),
+            source="nginx",
+            service="nginx",
+            method="GET",
+            path="/wp-login.php",
+            status_code=404,
+        ),
+        state,
+    )
+
+    finding_types = {finding.finding_type for finding in findings}
+    assert "suspicious_web_probe" not in finding_types
+
+
+def test_rule_severity_can_be_overridden() -> None:
+    """Custom severity overrides should be used in generated findings."""
+    state = DetectionState(
+        finding_severities={"root_login_attempt": "critical"},
+    )
+
+    findings = process_event(
+        make_event(
+            "ssh_root_login_attempt",
+            "185.10.10.1",
+            datetime(2026, 3, 25, 10, 0, 2),
+            "root",
+        ),
+        state,
+    )
+
+    root_findings = [
+        finding for finding in findings
+        if finding.finding_type == "root_login_attempt"
+    ]
+    assert root_findings
+    assert root_findings[0].severity == "critical"
+
+
 def test_repeated_mail_auth_failures_generate_finding() -> None:
     """Repeated mail auth failures should trigger once per IP."""
     state = DetectionState()

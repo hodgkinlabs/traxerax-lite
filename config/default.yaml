@@ -1,3 +1,37 @@
+detection:
+  thresholds:
+    auth_failed_login: 3
+    mail_failed_login: 3
+    repeated_http_error: 3
+  rules:
+    root_login_attempt: true
+    repeated_failed_login: true
+    success_after_failures: true
+    suspicious_web_probe: true
+    repeated_http_error_responses: true
+    repeated_mail_auth_failures: true
+    mail_success_after_failures: true
+    ip_banned_after_auth_activity: true
+    ip_banned_after_mail_activity: true
+    ip_banned_after_web_activity: true
+    web_probe_followed_by_auth_activity: true
+    web_probe_followed_by_fail2ban_ban: true
+    multi_source_ip_activity: true
+  severities:
+    root_login_attempt: medium
+    repeated_failed_login: medium
+    success_after_failures: high
+    suspicious_web_probe: medium
+    repeated_http_error_responses: medium
+    repeated_mail_auth_failures: medium
+    mail_success_after_failures: high
+    ip_banned_after_auth_activity: medium
+    ip_banned_after_mail_activity: medium
+    ip_banned_after_web_activity: medium
+    web_probe_followed_by_auth_activity: medium
+    web_probe_followed_by_fail2ban_ban: medium
+    multi_source_ip_activity: high
+
 nginx:
   repeated_error_threshold: 3
   error_status_codes:
