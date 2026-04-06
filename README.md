@@ -206,6 +206,9 @@ The current detection engine supports:
 - **Repeated Mail Auth Failures**
   - repeated Dovecot/Postfix authentication failures from the same IP
 
+- **Mail Password Spray Attempt**
+  - repeated failed mail logins from one IP against multiple usernames
+
 - **Mail Success After Failures**
   - successful mail login after prior mail auth failures
 

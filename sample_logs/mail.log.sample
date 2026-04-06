@@ -3,6 +3,9 @@ Mar 25 10:11:40 debian dovecot: imap-login: Disconnected (auth failed, 1 attempt
 Mar 25 10:11:50 debian submission/smtpd[3101]: warning: unknown[198.51.100.20]: SASL LOGIN authentication failed: authentication failure
 Mar 25 10:12:00 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<mailuser>, method=PLAIN, rip=198.51.100.20, lip=203.0.113.10, TLS, session=<def456>
 Mar 25 10:12:20 debian submission/smtpd[3102]: warning: unknown[203.0.113.88]: SASL PLAIN authentication failed: authentication failure
+Mar 25 10:12:26 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<finance>, method=PLAIN, rip=203.0.113.88, lip=203.0.113.10, TLS, session=<spr001>
+Mar 25 10:12:33 debian dovecot: pop3-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<hr>, method=PLAIN, rip=203.0.113.88, lip=203.0.113.10, TLS, session=<spr002>
+Mar 25 10:12:40 debian dovecot: imap-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<ceo>, method=PLAIN, rip=203.0.113.88, lip=203.0.113.10, TLS, session=<spr003>
 Mar 25 10:18:18 debian dovecot: pop3-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<alerts>, method=PLAIN, rip=185.10.10.1, lip=203.0.113.10, TLS, session=<pop111>
 Mar 25 10:18:20 debian submission/smtpd[3103]: warning: unknown[185.10.10.1]: SASL LOGIN authentication failed: authentication failure
 Mar 25 10:18:24 debian dovecot: pop3-login: Disconnected (auth failed, 1 attempts in 1 secs): user=<alerts>, method=PLAIN, rip=185.10.10.1, lip=203.0.113.10, TLS, session=<pop222>

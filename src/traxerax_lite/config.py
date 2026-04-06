@@ -16,6 +16,7 @@ DEFAULT_FINDING_SEVERITIES = {
     "suspicious_web_probe": "medium",
     "repeated_http_error_responses": "medium",
     "repeated_mail_auth_failures": "medium",
+    "mail_password_spray_attempt": "high",
     "mail_success_after_failures": "high",
     "ip_banned_after_auth_activity": "medium",
     "ip_banned_after_mail_activity": "medium",
@@ -32,6 +33,7 @@ class DetectionSettings:
 
     auth_failed_login_threshold: int = 3
     mail_failed_login_threshold: int = 3
+    mail_unique_username_threshold: int = 3
     http_error_threshold: int = 3
     http_error_statuses: set[int] = field(
         default_factory=lambda: {
@@ -123,6 +125,9 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
         ),
         mail_failed_login_threshold=int(
             thresholds.get("mail_failed_login", 3)
+        ),
+        mail_unique_username_threshold=int(
+            thresholds.get("mail_unique_usernames", 3)
         ),
         http_error_threshold=int(
             thresholds.get(

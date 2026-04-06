@@ -14,6 +14,7 @@ class DetectionState:
 
     auth_failed_login_threshold: int = 3
     mail_failed_login_threshold: int = 3
+    mail_unique_username_threshold: int = 3
     http_error_statuses: set[int] = field(default_factory=set)
     http_error_threshold: int = 3
     enabled_rules: dict[str, bool] = field(
@@ -43,7 +44,11 @@ class DetectionState:
     mail_failed_counts: dict[str, int] = field(
         default_factory=lambda: defaultdict(int)
     )
+    mail_failed_usernames: dict[str, set[str]] = field(
+        default_factory=lambda: defaultdict(set)
+    )
     mail_threshold_alerted: set[str] = field(default_factory=set)
+    mail_password_spray_alerted: set[str] = field(default_factory=set)
 
     auth_enforcement_alerted: set[str] = field(default_factory=set)
     web_enforcement_alerted: set[str] = field(default_factory=set)
@@ -63,6 +68,9 @@ class DetectionState:
         return cls(
             auth_failed_login_threshold=settings.auth_failed_login_threshold,
             mail_failed_login_threshold=settings.mail_failed_login_threshold,
+            mail_unique_username_threshold=(
+                settings.mail_unique_username_threshold
+            ),
             http_error_statuses=set(settings.http_error_statuses),
             http_error_threshold=settings.http_error_threshold,
             enabled_rules=dict(settings.enabled_rules),
@@ -300,6 +308,29 @@ def _process_mail_event(
         "postfix_sasl_auth_failed",
     }:
         state.mail_failed_counts[ip] += 1
+
+        if event.username:
+            state.mail_failed_usernames[ip].add(event.username)
+
+            if (
+                len(state.mail_failed_usernames[ip])
+                >= state.mail_unique_username_threshold
+                and ip not in state.mail_password_spray_alerted
+            ):
+                state.mail_password_spray_alerted.add(ip)
+                finding = _make_finding(
+                    state=state,
+                    finding_type="mail_password_spray_attempt",
+                    message=(
+                        "Mail password spray behavior detected from "
+                        f"{ip} against "
+                        f"{len(state.mail_failed_usernames[ip])} accounts"
+                    ),
+                    src_ip=ip,
+                    timestamp=event.timestamp,
+                )
+                if finding is not None:
+                    findings.append(finding)
 
         if (
             state.mail_failed_counts[ip] >= state.mail_failed_login_threshold
