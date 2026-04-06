@@ -509,14 +509,12 @@ def test_get_persistent_multi_source_ips_returns_sustained_ips() -> None:
         ),
         Event(
             timestamp=datetime(2026, 3, 25, 10, 3, 1),
-            source="fail2ban",
-            event_type="fail2ban_ban",
-            raw="ban1",
+            source="mail",
+            event_type="postfix_sasl_auth_failed",
+            raw="mail1",
             src_ip="185.10.10.1",
-            service="sshd",
-            process="fail2ban",
-            action="ban",
-            jail="actions",
+            service="smtp",
+            process="submission/smtpd",
         ),
     ]
     for event in events:
@@ -526,7 +524,7 @@ def test_get_persistent_multi_source_ips_returns_sustained_ips() -> None:
 
     assert len(rows) == 1
     assert rows[0]["src_ip"] == "185.10.10.1"
-    assert rows[0]["source_count"] == 2
+    assert rows[0]["source_count"] == 3
     assert rows[0]["total_events"] == 4
 
     connection.close()
@@ -681,8 +679,8 @@ def test_get_ip_overview_returns_first_last_and_total() -> None:
 
     assert row is not None
     assert row["first_seen"] == "2026-03-25 10:00:01"
-    assert row["last_seen"] == "2026-03-25 10:00:08"
-    assert row["total_events"] == 2
+    assert row["last_seen"] == "2026-03-25 10:00:01"
+    assert row["total_events"] == 1
 
     connection.close()
 
@@ -730,7 +728,7 @@ def test_get_ip_persistence_stats_returns_aggregate_stats() -> None:
     row = get_ip_persistence_stats(connection, "185.10.10.1")
 
     assert row is not None
-    assert row["total_events"] == 3
+    assert row["total_events"] == 2
     assert row["source_count"] == 1
     assert row["ban_count"] == 1
     assert row["root_attempt_count"] == 1

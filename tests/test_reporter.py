@@ -2,8 +2,12 @@
 
 from datetime import datetime
 
-from traxerax_lite.models import Event, Finding
-from traxerax_lite.reporter import format_event, format_finding
+from traxerax_lite.models import EnforcementAction, Event, Finding
+from traxerax_lite.reporter import (
+    format_enforcement_action,
+    format_event,
+    format_finding,
+)
 
 
 def test_format_event_includes_core_fields() -> None:
@@ -38,12 +42,10 @@ def test_format_event_includes_core_fields() -> None:
     assert "status=-" in output
 
 
-def test_format_fail2ban_event_includes_action_and_jail() -> None:
-    """Formatted fail2ban events should show action and jail values."""
-    event = Event(
+def test_format_enforcement_action_includes_action_and_jail() -> None:
+    """Formatted enforcement output should show action and jail values."""
+    action = EnforcementAction(
         timestamp=datetime(2026, 3, 25, 10, 0, 8),
-        source="fail2ban",
-        event_type="fail2ban_ban",
         raw="test raw line",
         src_ip="185.10.10.1",
         service="sshd",
@@ -52,10 +54,9 @@ def test_format_fail2ban_event_includes_action_and_jail() -> None:
         jail="actions",
     )
 
-    output = format_event(event)
+    output = format_enforcement_action(action)
 
-    assert "source=fail2ban" in output
-    assert "type=fail2ban_ban" in output
+    assert "[ENFORCEMENT]" in output
     assert "service=sshd" in output
     assert "action=ban" in output
     assert "jail=actions" in output

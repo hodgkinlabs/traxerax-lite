@@ -74,17 +74,15 @@ def get_top_finding_source_ips(
 def get_ips_seen_in_auth_and_fail2ban(
     connection: sqlite3.Connection,
 ) -> list[sqlite3.Row]:
-    """Return IPs present in both auth and fail2ban event sources."""
+    """Return IPs present in auth events and enforcement actions."""
     cursor = connection.execute(
         """
-        SELECT e.src_ip
+        SELECT DISTINCT e.src_ip
         FROM events AS e
-        WHERE e.src_ip IS NOT NULL
-        GROUP BY e.src_ip
-        HAVING
-            SUM(CASE WHEN e.source = 'auth' THEN 1 ELSE 0 END) > 0
-            AND
-            SUM(CASE WHEN e.source = 'fail2ban' THEN 1 ELSE 0 END) > 0
+        JOIN enforcement_actions AS a
+            ON e.src_ip = a.src_ip
+        WHERE e.source = 'auth'
+          AND e.src_ip IS NOT NULL
         ORDER BY e.src_ip ASC
         """
     )
@@ -99,10 +97,10 @@ def get_ips_with_root_attempt_and_ban(
         """
         SELECT DISTINCT root_events.src_ip
         FROM events AS root_events
-        JOIN events AS ban_events
+        JOIN enforcement_actions AS ban_events
             ON root_events.src_ip = ban_events.src_ip
         WHERE root_events.event_type = 'ssh_root_login_attempt'
-          AND ban_events.event_type = 'fail2ban_ban'
+          AND ban_events.action = 'ban'
           AND root_events.src_ip IS NOT NULL
         ORDER BY root_events.src_ip ASC
         """
@@ -137,8 +135,8 @@ def get_repeat_banned_ips(
     cursor = connection.execute(
         """
         SELECT src_ip, COUNT(*) AS ban_count
-        FROM events
-        WHERE event_type = 'fail2ban_ban'
+        FROM enforcement_actions
+        WHERE action = 'ban'
           AND src_ip IS NOT NULL
         GROUP BY src_ip
         HAVING COUNT(*) >= ?
@@ -162,20 +160,20 @@ def get_returned_after_ban_ips(
                 ban.timestamp AS ban_time,
                 (
                     SELECT MIN(next_ban.timestamp)
-                    FROM events AS next_ban
+                    FROM enforcement_actions AS next_ban
                     WHERE next_ban.src_ip = ban.src_ip
-                      AND next_ban.event_type = 'fail2ban_ban'
+                      AND next_ban.action = 'ban'
                       AND next_ban.timestamp > ban.timestamp
                 ) AS next_ban_time,
                 (
                     SELECT MIN(unban.timestamp)
-                    FROM events AS unban
+                    FROM enforcement_actions AS unban
                     WHERE unban.src_ip = ban.src_ip
-                      AND unban.event_type = 'fail2ban_unban'
+                      AND unban.action = 'unban'
                       AND unban.timestamp > ban.timestamp
                 ) AS next_unban_time
-            FROM events AS ban
-            WHERE ban.event_type = 'fail2ban_ban'
+            FROM enforcement_actions AS ban
+            WHERE ban.action = 'ban'
               AND ban.src_ip IS NOT NULL
         ),
         returned_bans AS (
@@ -270,7 +268,7 @@ def get_events_for_ip(
     connection: sqlite3.Connection,
     src_ip: str,
 ) -> list[sqlite3.Row]:
-    """Return ordered events for a given source IP."""
+    """Return ordered observed events for a given source IP."""
     cursor = connection.execute(
         """
         SELECT
@@ -322,7 +320,7 @@ def get_ip_overview(
     connection: sqlite3.Connection,
     src_ip: str,
 ) -> sqlite3.Row | None:
-    """Return first seen, last seen, and total event count for an IP."""
+    """Return first seen, last seen, and total observed event count for an IP."""
     cursor = connection.execute(
         """
         SELECT
@@ -440,16 +438,7 @@ def get_ip_persistence_stats(
         """
         SELECT
             COUNT(*) AS total_events,
-            COUNT(
-                DISTINCT CASE
-                    WHEN source != 'fail2ban' THEN source
-                    ELSE NULL
-                END
-            ) AS source_count,
-            SUM(
-                CASE WHEN event_type = 'fail2ban_ban'
-                     THEN 1 ELSE 0 END
-            ) AS ban_count,
+            COUNT(DISTINCT source) AS source_count,
             SUM(
                 CASE WHEN event_type = 'ssh_root_login_attempt'
                      THEN 1 ELSE 0 END
@@ -457,11 +446,17 @@ def get_ip_persistence_stats(
             SUM(
                 CASE WHEN source = 'auth'
                      THEN 1 ELSE 0 END
-            ) AS auth_event_count
+            ) AS auth_event_count,
+            (
+                SELECT COUNT(*)
+                FROM enforcement_actions
+                WHERE src_ip = ?
+                  AND action = 'ban'
+            ) AS ban_count
         FROM events
         WHERE src_ip = ?
         """,
-        (src_ip,),
+        (src_ip, src_ip),
     )
     row = cursor.fetchone()
     if row is None or row["total_events"] == 0:
@@ -482,21 +477,21 @@ def get_ip_post_ban_activity_count(
                 ban.timestamp AS ban_time,
                 (
                     SELECT MIN(next_ban.timestamp)
-                    FROM events AS next_ban
+                    FROM enforcement_actions AS next_ban
                     WHERE next_ban.src_ip = ban.src_ip
-                      AND next_ban.event_type = 'fail2ban_ban'
+                      AND next_ban.action = 'ban'
                       AND next_ban.timestamp > ban.timestamp
                 ) AS next_ban_time,
                 (
                     SELECT MIN(unban.timestamp)
-                    FROM events AS unban
+                    FROM enforcement_actions AS unban
                     WHERE unban.src_ip = ban.src_ip
-                      AND unban.event_type = 'fail2ban_unban'
+                      AND unban.action = 'unban'
                       AND unban.timestamp > ban.timestamp
                 ) AS next_unban_time
-            FROM events AS ban
+            FROM enforcement_actions AS ban
             WHERE ban.src_ip = ?
-              AND ban.event_type = 'fail2ban_ban'
+              AND ban.action = 'ban'
         ),
         returned_events AS (
             SELECT
@@ -528,9 +523,9 @@ def get_ip_post_ban_return_count(
     cursor = connection.execute(
         """
         SELECT COUNT(*) AS count
-        FROM events AS ban
+        FROM enforcement_actions AS ban
         WHERE ban.src_ip = ?
-          AND ban.event_type = 'fail2ban_ban'
+          AND ban.action = 'ban'
           AND EXISTS (
               SELECT 1
               FROM events AS e
@@ -539,9 +534,9 @@ def get_ip_post_ban_return_count(
                 AND e.timestamp > COALESCE(
                     (
                         SELECT MIN(unban.timestamp)
-                        FROM events AS unban
+                        FROM enforcement_actions AS unban
                         WHERE unban.src_ip = ban.src_ip
-                          AND unban.event_type = 'fail2ban_unban'
+                          AND unban.action = 'unban'
                           AND unban.timestamp > ban.timestamp
                     ),
                     ban.timestamp
@@ -549,9 +544,9 @@ def get_ip_post_ban_return_count(
                 AND e.timestamp < COALESCE(
                     (
                         SELECT MIN(next_ban.timestamp)
-                        FROM events AS next_ban
+                        FROM enforcement_actions AS next_ban
                         WHERE next_ban.src_ip = ban.src_ip
-                          AND next_ban.event_type = 'fail2ban_ban'
+                          AND next_ban.action = 'ban'
                           AND next_ban.timestamp > ban.timestamp
                     ),
                     '9999-12-31 23:59:59'
@@ -562,3 +557,72 @@ def get_ip_post_ban_return_count(
     )
     row = cursor.fetchone()
     return 0 if row is None else row["count"]
+
+
+def get_enforcement_actions_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return ordered enforcement actions for a given IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            timestamp,
+            action,
+            service,
+            process,
+            jail,
+            raw
+        FROM enforcement_actions
+        WHERE src_ip = ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
+def get_ip_enforcement_summary(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> sqlite3.Row | None:
+    """Return enforcement-oriented summary stats for an IP."""
+    cursor = connection.execute(
+        """
+        WITH observed AS (
+            SELECT MIN(timestamp) AS first_seen
+            FROM events
+            WHERE src_ip = ?
+        ),
+        bans AS (
+            SELECT
+                MIN(CASE WHEN action = 'ban' THEN timestamp END) AS first_ban_time,
+                MAX(CASE WHEN action = 'ban' THEN timestamp END) AS last_ban_time,
+                MAX(CASE WHEN action = 'unban' THEN timestamp END) AS last_unban_time,
+                SUM(CASE WHEN action = 'ban' THEN 1 ELSE 0 END) AS ban_count,
+                SUM(CASE WHEN action = 'unban' THEN 1 ELSE 0 END) AS unban_count,
+                GROUP_CONCAT(DISTINCT service) AS controls_seen,
+                GROUP_CONCAT(DISTINCT jail) AS log_channels_seen
+            FROM enforcement_actions
+            WHERE src_ip = ?
+        )
+        SELECT
+            observed.first_seen AS first_observed_time,
+            bans.first_ban_time,
+            bans.last_ban_time,
+            bans.last_unban_time,
+            bans.ban_count,
+            bans.unban_count,
+            bans.controls_seen,
+            bans.log_channels_seen
+        FROM observed
+        CROSS JOIN bans
+        """,
+        (src_ip, src_ip),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if (row["first_observed_time"] is None and row["ban_count"] in (None, 0)):
+        return None
+    return row

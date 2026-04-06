@@ -115,8 +115,8 @@ Traxerax-lite currently supports:
   - successful SSH logins
 
 - **fail2ban logs**
-  - ban events
-  - unban events
+  - enforcement actions
+  - ban and unban outcomes tied to prior activity
 
 - **nginx access logs**
   - regular requests
@@ -181,7 +181,7 @@ All logic is deterministic and testable.
 
 ### 3. SQLite Persistence
 
-All events and findings are stored locally in SQLite.
+Observed activity events, enforcement actions, and findings are stored locally in SQLite.
 
 Default database path:
 

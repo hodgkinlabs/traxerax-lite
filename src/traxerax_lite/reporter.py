@@ -1,7 +1,7 @@
 """Formatting helpers for terminal output."""
 
 import json
-from traxerax_lite.models import Event, Finding
+from traxerax_lite.models import EnforcementAction, Event, Finding
 
 
 def format_event(event: Event) -> str:
@@ -48,6 +48,24 @@ def format_finding(finding: Finding) -> str:
     )
 
 
+def format_enforcement_action(action: EnforcementAction) -> str:
+    """Return a concise terminal-friendly enforcement string."""
+    timestamp = action.timestamp.strftime("%Y-%m-%d %H:%M:%S%z")
+    ip = action.src_ip or "-"
+    service = action.service or "-"
+    process = action.process or "-"
+    jail = action.jail or "-"
+
+    return (
+        f"[ENFORCEMENT] {timestamp} "
+        f"action={action.action} "
+        f"ip={ip} "
+        f"service={service} "
+        f"process={process} "
+        f"jail={jail}"
+    )
+
+
 def json_format_event(event: Event) -> str:
     """Return JSON representation of an event."""
     data = {
@@ -80,5 +98,20 @@ def json_format_finding(finding: Finding) -> str:
         "severity": finding.severity,
         "message": finding.message,
         "src_ip": finding.src_ip,
+    }
+    return json.dumps(data)
+
+
+def json_format_enforcement_action(action: EnforcementAction) -> str:
+    """Return JSON representation of an enforcement action."""
+    data = {
+        "type": "enforcement",
+        "timestamp": action.timestamp.isoformat(),
+        "raw": action.raw,
+        "src_ip": action.src_ip,
+        "action": action.action,
+        "service": action.service,
+        "process": action.process,
+        "jail": action.jail,
     }
     return json.dumps(data)

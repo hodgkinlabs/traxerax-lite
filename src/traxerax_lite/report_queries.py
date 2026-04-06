@@ -1,8 +1,10 @@
 """Report generation from stored SQLite data."""
 
 import sqlite3
+from datetime import datetime
 
 from traxerax_lite.query import (
+    get_enforcement_actions_for_ip,
     get_event_counts_by_source_for_ip,
     get_event_counts_by_type,
     get_event_counts_by_type_for_ip,
@@ -10,6 +12,7 @@ from traxerax_lite.query import (
     get_finding_counts_by_type,
     get_finding_counts_by_type_for_ip,
     get_findings_for_ip,
+    get_ip_enforcement_summary,
     get_ip_overview,
     get_nginx_error_status_counts_for_ip,
     get_ip_persistence_stats,
@@ -34,7 +37,7 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
     finding_counts = get_finding_counts_by_type(connection)
     top_event_ips = get_top_event_source_ips(connection)
     top_finding_ips = get_top_finding_source_ips(connection)
-    cross_source_ips = get_ips_seen_in_auth_and_fail2ban(connection)
+    auth_enforced_ips = get_ips_seen_in_auth_and_fail2ban(connection)
     root_then_ban_ips = get_ips_with_root_attempt_and_ban(connection)
     top_ips_by_finding_count = get_top_ips_by_finding_count(connection)
 
@@ -79,9 +82,9 @@ def build_summary_report(connection: sqlite3.Connection) -> str:
         lines.append("  - none")
 
     lines.append("")
-    lines.append("cross_source_ips:")
-    if cross_source_ips:
-        for row in cross_source_ips:
+    lines.append("auth_ips_with_enforcement:")
+    if auth_enforced_ips:
+        for row in auth_enforced_ips:
             lines.append(f"  - {row['src_ip']}")
     else:
         lines.append("  - none")
@@ -159,6 +162,7 @@ def build_ip_report(
     source_counts = get_event_counts_by_source_for_ip(connection, src_ip)
     event_type_counts = get_event_counts_by_type_for_ip(connection, src_ip)
     finding_type_counts = get_finding_counts_by_type_for_ip(connection, src_ip)
+    enforcement_summary = get_ip_enforcement_summary(connection, src_ip)
     nginx_error_status_counts = get_nginx_error_status_counts_for_ip(
         connection,
         src_ip,
@@ -168,6 +172,7 @@ def build_ip_report(
     post_ban_return_count = get_ip_post_ban_return_count(connection, src_ip)
 
     events = get_events_for_ip(connection, src_ip)
+    enforcement_actions = get_enforcement_actions_for_ip(connection, src_ip)
     findings = get_findings_for_ip(connection, src_ip)
 
     lines: list[str] = []
@@ -180,6 +185,39 @@ def build_ip_report(
         lines.append(f"  - last_seen: {overview['last_seen']}")
         lines.append(f"  - total_events: {overview['total_events']}")
         lines.append(f"  - total_findings: {total_findings}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("enforcement:")
+    if enforcement_summary is not None:
+        ever_banned = (enforcement_summary["ban_count"] or 0) >= 1
+        timely_ban = _format_ban_delay(
+            first_observed_time=enforcement_summary["first_observed_time"],
+            first_ban_time=enforcement_summary["first_ban_time"],
+        )
+        lines.append(f"  - ever_banned: {'yes' if ever_banned else 'no'}")
+        lines.append(f"  - ban_count: {enforcement_summary['ban_count'] or 0}")
+        lines.append(
+            f"  - unban_count: {enforcement_summary['unban_count'] or 0}"
+        )
+        lines.append(
+            f"  - first_ban_time: "
+            f"{enforcement_summary['first_ban_time'] or 'none'}"
+        )
+        lines.append(
+            f"  - last_ban_time: "
+            f"{enforcement_summary['last_ban_time'] or 'none'}"
+        )
+        lines.append(
+            f"  - last_unban_time: "
+            f"{enforcement_summary['last_unban_time'] or 'none'}"
+        )
+        lines.append(f"  - first_ban_delay: {timely_ban}")
+        lines.append(
+            f"  - controls_seen: "
+            f"{enforcement_summary['controls_seen'] or 'none'}"
+        )
     else:
         lines.append("  - none")
 
@@ -261,6 +299,22 @@ def build_ip_report(
         lines.append("  - none")
 
     lines.append("")
+    lines.append("enforcement_timeline:")
+    if enforcement_actions:
+        for row in enforcement_actions:
+            details: list[str] = []
+            details.append(f"action={row['action']}")
+            if row["service"] is not None:
+                details.append(f"service={row['service']}")
+            if row["process"] is not None:
+                details.append(f"process={row['process']}")
+            if row["jail"] is not None:
+                details.append(f"jail={row['jail']}")
+            lines.append(f"  - {row['timestamp']} | " + " ".join(details))
+    else:
+        lines.append("  - none")
+
+    lines.append("")
     lines.append("timeline:")
     if events:
         for row in events:
@@ -307,3 +361,20 @@ def build_ip_report(
         lines.append("  - none")
 
     return "\n".join(lines)
+
+
+def _format_ban_delay(
+    first_observed_time: str | None,
+    first_ban_time: str | None,
+) -> str:
+    """Format time from first observed activity to first ban."""
+    if first_observed_time is None or first_ban_time is None:
+        return "none"
+
+    observed = datetime.fromisoformat(first_observed_time)
+    banned = datetime.fromisoformat(first_ban_time)
+    delta = int((banned - observed).total_seconds())
+
+    if delta < 0:
+        return "before_observed_activity"
+    return f"{delta}s"

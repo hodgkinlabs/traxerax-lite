@@ -7,8 +7,12 @@ from typing import Callable
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import load_config
-from traxerax_lite.detector import DetectionState, process_event
-from traxerax_lite.models import Event
+from traxerax_lite.detector import (
+    DetectionState,
+    process_enforcement_action,
+    process_event,
+)
+from traxerax_lite.models import EnforcementAction, Event
 from traxerax_lite.parser import (
     parse_auth_line,
     parse_fail2ban_line,
@@ -16,10 +20,18 @@ from traxerax_lite.parser import (
     parse_nginx_access_line,
 )
 from traxerax_lite.report_queries import build_ip_report, build_summary_report
-from traxerax_lite.reporter import format_event, format_finding, json_format_event, json_format_finding
+from traxerax_lite.reporter import (
+    format_enforcement_action,
+    format_event,
+    format_finding,
+    json_format_enforcement_action,
+    json_format_event,
+    json_format_finding,
+)
 from traxerax_lite.storage import (
     get_connection,
     initialize_database,
+    insert_enforcement_action,
     insert_event,
     insert_finding,
 )
@@ -49,6 +61,11 @@ def main() -> None:
 
     event_formatter = json_format_event if args.json else format_event
     finding_formatter = json_format_finding if args.json else format_finding
+    enforcement_formatter = (
+        json_format_enforcement_action
+        if args.json
+        else format_enforcement_action
+    )
 
     connection = get_connection(args.db_path)
     initialize_database(connection)
@@ -84,7 +101,7 @@ def main() -> None:
         parsed_count = 0
         finding_count = 0
 
-        ordered_events = _collect_normalized_events(
+        ordered_records = _collect_normalized_events(
             auth_log=args.auth_log,
             fail2ban_log=args.fail2ban_log,
             nginx_log=args.nginx_log,
@@ -94,12 +111,17 @@ def main() -> None:
             nginx_paths=nginx_paths,
         )
 
-        for event in ordered_events:
+        for record in ordered_records:
             parsed_count += 1
-            logger.info(event_formatter(event))
-            insert_event(connection, event)
+            if isinstance(record, Event):
+                logger.info(event_formatter(record))
+                insert_event(connection, record)
+                findings = process_event(record, state)
+            else:
+                logger.info(enforcement_formatter(record))
+                insert_enforcement_action(connection, record)
+                findings = process_enforcement_action(record, state)
 
-            findings = process_event(event, state)
             for finding in findings:
                 finding_count += 1
                 logger.info(finding_formatter(finding))
@@ -121,25 +143,25 @@ def _collect_normalized_events(
     year: int | None,
     local_timezone: tzinfo,
     nginx_paths: list[str],
-) -> list[Event]:
-    """Collect parsed events from all sources and return them in time order."""
-    collected: list[tuple[datetime, int, Event]] = []
+) -> list[Event | EnforcementAction]:
+    """Collect parsed records from all sources and return them in time order."""
+    collected: list[tuple[datetime, int, Event | EnforcementAction]] = []
     sequence = 0
 
     def collect_from_log(
         path: str | None,
-        parser: Callable[[str], Event | None],
+        parser: Callable[[str], Event | EnforcementAction | None],
     ) -> None:
         nonlocal sequence
         if not path:
             return
 
         for line in read_lines(path):
-            event = parser(line)
-            if event is None:
+            record = parser(line)
+            if record is None:
                 continue
 
-            collected.append((event.timestamp, sequence, event))
+            collected.append((record.timestamp, sequence, record))
             sequence += 1
 
     collect_from_log(
@@ -171,7 +193,7 @@ def _collect_normalized_events(
     )
 
     collected.sort(key=lambda item: (item[0], item[1]))
-    return [event for _, _, event in collected]
+    return [record for _, _, record in collected]
 
 
 if __name__ == "__main__":

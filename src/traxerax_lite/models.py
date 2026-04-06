@@ -35,3 +35,16 @@ class Finding:
     message: str
     src_ip: Optional[str]
     timestamp: datetime
+
+
+@dataclass(slots=True)
+class EnforcementAction:
+    """Normalized enforcement action emitted by security controls."""
+
+    timestamp: datetime
+    raw: str
+    src_ip: Optional[str]
+    action: str
+    service: Optional[str] = None
+    process: Optional[str] = None
+    jail: Optional[str] = None
