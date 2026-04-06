@@ -176,6 +176,116 @@ nginx:
         assert finding[1] == "low"
 
 
+def test_main_uses_mail_password_spray_threshold_and_severity_from_config() -> None:
+    """Configured mail spray settings should affect persisted findings."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        config_path = Path(tmpdir) / "config.yaml"
+        mail_log = Path(tmpdir) / "mail.log"
+
+        config_path.write_text(
+            """
+detection:
+  thresholds:
+    mail_unique_usernames: 2
+  severities:
+    mail_password_spray_attempt: critical
+nginx:
+  suspicious_paths:
+    - "/wp-login.php"
+"""
+        )
+        mail_log.write_text(
+            "\n".join(
+                [
+                    (
+                        "Mar 25 10:11:40 debian dovecot: imap-login: "
+                        "Disconnected (auth failed, 1 attempts in 2 secs): "
+                        "user=<alice>, method=PLAIN, rip=198.51.100.20, "
+                        "lip=203.0.113.10, TLS, session=<abc123>"
+                    ),
+                    (
+                        "Mar 25 10:11:50 debian dovecot: imap-login: "
+                        "Disconnected (auth failed, 1 attempts in 2 secs): "
+                        "user=<bob>, method=PLAIN, rip=198.51.100.20, "
+                        "lip=203.0.113.10, TLS, session=<abc124>"
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--config",
+                str(config_path),
+                "--db-path",
+                str(db_path),
+                "--mail-log",
+                str(mail_log),
+                "--year",
+                "2026",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        finding = conn.execute(
+            """
+            SELECT finding_type, severity
+            FROM findings
+            WHERE finding_type = 'mail_password_spray_attempt'
+            """
+        ).fetchone()
+        conn.close()
+
+        assert finding is not None
+        assert finding[1] == "critical"
+
+
+def test_main_processing_with_sample_mail_log_demonstrates_mail_findings() -> None:
+    """Sample mail log should exercise the key mail security detections."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--db-path",
+                str(db_path),
+                "--mail-log",
+                "sample_logs/mail.log.sample",
+                "--year",
+                "2026",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        rows = conn.execute(
+            """
+            SELECT finding_type
+            FROM findings
+            ORDER BY timestamp ASC, id ASC
+            """
+        ).fetchall()
+        conn.close()
+
+        finding_types = {row[0] for row in rows}
+        assert "repeated_mail_auth_failures" in finding_types
+        assert "mail_password_spray_attempt" in finding_types
+        assert "mail_success_after_failures" in finding_types
+
+
 def test_reporting_settings_loaded_from_config_affect_ip_report() -> None:
     """Loaded reporting settings should affect generated IP report output."""
     with tempfile.TemporaryDirectory() as tmpdir:

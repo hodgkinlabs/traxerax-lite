@@ -253,6 +253,53 @@ def test_repeated_mail_auth_failures_generate_finding() -> None:
     assert "repeated_mail_auth_failures" in finding_types
 
 
+def test_mail_password_spray_attempt_generates_finding() -> None:
+    """Distinct failed usernames from one IP should trigger spray detection."""
+    state = DetectionState(mail_unique_username_threshold=3)
+    ip = "198.51.100.20"
+
+    process_event(
+        make_event(
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 40),
+            "alice",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+    process_event(
+        make_event(
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 11, 50),
+            "bob",
+            source="mail",
+            service="imap",
+        ),
+        state,
+    )
+    findings = process_event(
+        make_event(
+            "dovecot_failed_login",
+            ip,
+            datetime(2026, 3, 25, 10, 12, 0),
+            "carol",
+            source="mail",
+            service="pop3",
+        ),
+        state,
+    )
+
+    spray_findings = [
+        finding for finding in findings
+        if finding.finding_type == "mail_password_spray_attempt"
+    ]
+    assert spray_findings
+    assert spray_findings[0].severity == "high"
+
+
 def test_mail_success_after_failures_generates_finding() -> None:
     """Mail success after failures should trigger high-severity finding."""
     state = DetectionState()

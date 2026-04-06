@@ -2,6 +2,7 @@ detection:
   thresholds:
     auth_failed_login: 3
     mail_failed_login: 3
+    mail_unique_usernames: 3
     repeated_http_error: 3
   rules:
     root_login_attempt: true
@@ -10,6 +11,7 @@ detection:
     suspicious_web_probe: true
     repeated_http_error_responses: true
     repeated_mail_auth_failures: true
+    mail_password_spray_attempt: true
     mail_success_after_failures: true
     ip_banned_after_auth_activity: true
     ip_banned_after_mail_activity: true
@@ -24,6 +26,7 @@ detection:
     suspicious_web_probe: medium
     repeated_http_error_responses: medium
     repeated_mail_auth_failures: medium
+    mail_password_spray_attempt: high
     mail_success_after_failures: high
     ip_banned_after_auth_activity: medium
     ip_banned_after_mail_activity: medium
