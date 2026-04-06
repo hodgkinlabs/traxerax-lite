@@ -2,12 +2,14 @@
 
 from datetime import datetime
 
-from traxerax_lite.models import Event, Finding
+from traxerax_lite.models import EnforcementAction, Event, Finding
 from traxerax_lite.storage import (
     get_connection,
     initialize_database,
+    insert_enforcement_action,
     insert_event,
     insert_finding,
+    make_enforcement_action_hash,
     make_event_hash,
     make_finding_hash,
 )
@@ -29,6 +31,7 @@ def test_initialize_database_creates_tables() -> None:
 
     assert "events" in table_names
     assert "findings" in table_names
+    assert "enforcement_actions" in table_names
 
     connection.close()
 
@@ -66,6 +69,24 @@ def test_make_finding_hash_is_deterministic() -> None:
 
     hash_1 = make_finding_hash(finding)
     hash_2 = make_finding_hash(finding)
+
+    assert hash_1 == hash_2
+
+
+def test_make_enforcement_action_hash_is_deterministic() -> None:
+    """Same enforcement data should always produce the same hash."""
+    action = EnforcementAction(
+        timestamp=datetime(2026, 3, 25, 10, 0, 8),
+        raw="test raw enforcement line",
+        src_ip="185.10.10.1",
+        action="ban",
+        service="sshd",
+        process="fail2ban",
+        jail="actions",
+    )
+
+    hash_1 = make_enforcement_action_hash(action)
+    hash_2 = make_enforcement_action_hash(action)
 
     assert hash_1 == hash_2
 
@@ -169,5 +190,46 @@ def test_insert_duplicate_finding_is_ignored() -> None:
 
     assert row is not None
     assert row["count"] == 1
+
+    connection.close()
+
+
+def test_insert_enforcement_action_persists_fields() -> None:
+    """Inserted enforcement actions should store action metadata."""
+    connection = get_connection(":memory:")
+    initialize_database(connection)
+
+    action = EnforcementAction(
+        timestamp=datetime(2026, 3, 25, 10, 0, 8),
+        raw="test raw line",
+        src_ip="185.10.10.1",
+        action="ban",
+        service="sshd",
+        process="fail2ban",
+        jail="actions",
+    )
+
+    insert_enforcement_action(connection, action)
+
+    row = connection.execute(
+        """
+        SELECT
+            action_hash,
+            src_ip,
+            action,
+            service,
+            process,
+            jail
+        FROM enforcement_actions
+        """
+    ).fetchone()
+
+    assert row is not None
+    assert row["action_hash"] == make_enforcement_action_hash(action)
+    assert row["src_ip"] == "185.10.10.1"
+    assert row["action"] == "ban"
+    assert row["service"] == "sshd"
+    assert row["process"] == "fail2ban"
+    assert row["jail"] == "actions"
 
     connection.close()

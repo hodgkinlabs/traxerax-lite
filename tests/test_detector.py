@@ -2,8 +2,12 @@
 
 from datetime import datetime
 
-from traxerax_lite.detector import DetectionState, process_event
-from traxerax_lite.models import Event
+from traxerax_lite.detector import (
+    DetectionState,
+    process_enforcement_action,
+    process_event,
+)
+from traxerax_lite.models import EnforcementAction, Event
 
 
 def make_event(
@@ -36,6 +40,25 @@ def make_event(
         method=method,
         path=path,
         status_code=status_code,
+    )
+
+
+def make_enforcement_action(
+    src_ip: str,
+    timestamp: datetime,
+    action: str = "ban",
+    service: str = "sshd",
+    jail: str | None = None,
+) -> EnforcementAction:
+    """Build a minimal EnforcementAction for detector tests."""
+    return EnforcementAction(
+        timestamp=timestamp,
+        raw="test enforcement line",
+        src_ip=src_ip,
+        action=action,
+        service=service,
+        process="fail2ban",
+        jail=jail,
     )
 
 
@@ -209,12 +232,10 @@ def test_ip_banned_after_mail_activity_generates_finding() -> None:
         ),
         state,
     )
-    findings = process_event(
-        make_event(
-            "fail2ban_ban",
+    findings = process_enforcement_action(
+        make_enforcement_action(
             ip,
             datetime(2026, 3, 25, 10, 12, 30),
-            source="fail2ban",
             service="postfix-sasl",
             action="ban",
             jail="actions",
@@ -244,12 +265,10 @@ def test_ip_banned_after_web_activity_generates_finding() -> None:
         ),
         state,
     )
-    findings = process_event(
-        make_event(
-            "fail2ban_ban",
+    findings = process_enforcement_action(
+        make_enforcement_action(
             ip,
             datetime(2026, 3, 25, 10, 1, 1),
-            source="fail2ban",
             service="nginx-badbots",
             action="ban",
             jail="actions",
@@ -266,12 +285,10 @@ def test_web_probe_followed_by_fail2ban_ban_requires_temporal_order() -> None:
     state = DetectionState(http_error_statuses={404}, http_error_threshold=3)
     ip = "185.10.10.1"
 
-    process_event(
-        make_event(
-            "fail2ban_ban",
+    process_enforcement_action(
+        make_enforcement_action(
             ip,
             datetime(2026, 3, 25, 10, 0, 1),
-            source="fail2ban",
             service="nginx-badbots",
             action="ban",
             jail="actions",

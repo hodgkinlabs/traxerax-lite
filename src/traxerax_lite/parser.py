@@ -5,7 +5,7 @@ from datetime import datetime, tzinfo, timezone
 from typing import Iterable, Optional
 from urllib.parse import urlsplit
 
-from traxerax_lite.models import Event
+from traxerax_lite.models import EnforcementAction, Event
 
 FAILED_PATTERN = re.compile(
     r"^(?P<ts>\w{3}\s+\d+\s\d{2}:\d{2}:\d{2})\s+"
@@ -108,7 +108,7 @@ def parse_auth_line(
 def parse_fail2ban_line(
     line: str,
     local_timezone: tzinfo = timezone.utc,
-) -> Optional[Event]:
+) -> Optional[EnforcementAction]:
     """Parse a single fail2ban log line."""
     stripped = line.strip()
     if not stripped:
@@ -127,12 +127,8 @@ def parse_fail2ban_line(
     )
 
     action = match.group("action").lower()
-    event_type = f"fail2ban_{action}"
-
-    return Event(
+    return EnforcementAction(
         timestamp=timestamp,
-        source="fail2ban",
-        event_type=event_type,
         raw=stripped,
         src_ip=match.group("ip"),
         service=match.group("service"),

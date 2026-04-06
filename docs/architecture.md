@@ -5,23 +5,24 @@
 Traxerax-lite is a modular security log analysis tool built in Python. It follows a pipeline architecture:
 
 1. **Ingestion**: Read raw log files from multiple sources
-2. **Parsing**: Normalize log entries into structured `Event` objects
+2. **Parsing**: Normalize log entries into structured `Event` and `EnforcementAction` records
 3. **Detection**: Apply correlation rules to identify security findings
-4. **Storage**: Persist events and findings in SQLite database
+4. **Storage**: Persist observed events, enforcement actions, and findings in SQLite database
 5. **Reporting**: Generate human-readable or JSON reports
 
 ## Core Components
 
 ### Models (`models.py`)
 
-- `Event`: Represents a normalized security event with fields like timestamp, source, event_type, src_ip, etc.
+- `Event`: Represents a normalized observed security event with fields like timestamp, source, event_type, src_ip, etc.
+- `EnforcementAction`: Represents a control outcome such as a fail2ban ban or unban
 - `Finding`: Represents a detected security issue with severity, message, and associated IP
 
 ### Parsers (`parser.py`)
 
 Parsers for different log formats:
 - `parse_auth_line()`: SSH authentication logs
-- `parse_fail2ban_line()`: Fail2ban ban/unban events
+- `parse_fail2ban_line()`: Fail2ban enforcement actions
 - `parse_nginx_access_line()`: Nginx access logs
 - `parse_mail_line()`: Mail server authentication logs
 
@@ -29,10 +30,10 @@ Each parser returns an `Event` object or `None` if parsing fails.
 
 ### Detector (`detector.py`)
 
-Contains correlation logic in `process_event()`. Maintains `DetectionState` to track:
+Contains correlation logic in `process_event()` and `process_enforcement_action()`. Maintains `DetectionState` to track:
 - Failed login counts per IP
 - Recent events for correlation
-- Ban status
+- Enforcement status
 
 Detection rules include:
 - Root login attempts
@@ -44,7 +45,8 @@ Detection rules include:
 ### Storage (`storage.py`)
 
 SQLite-based persistence:
-- Events table: All parsed events
+- Events table: Observed activity from auth, nginx, and mail
+- Enforcement actions table: Control outcomes such as fail2ban bans/unbans
 - Findings table: Detected security issues
 - Uses SHA256 hashes to prevent duplicates
 - Row factory for dict-like access
@@ -63,9 +65,9 @@ YAML-based configuration loading. Currently defines suspicious nginx paths.
 ## Data Flow
 
 ```
-Log Files → Parsers → Events → Detector → Findings
-                    ↓          ↓
-               Storage ←─────── Storage
+Log Files → Parsers → Events / Enforcement → Detector → Findings
+                    ↓                  ↓
+               Storage ←─────────────── Storage
                     ↓
                Reporter → Output
 ```
@@ -82,6 +84,11 @@ Log Files → Parsers → Events → Detector → Findings
 - id (PK)
 - finding_hash (unique)
 - timestamp, finding_type, severity, message, src_ip
+
+### enforcement_actions table
+- id (PK)
+- action_hash (unique)
+- timestamp, raw, src_ip, action, service, process, jail
 
 ## Extensibility
 

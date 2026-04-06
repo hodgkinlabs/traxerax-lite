@@ -63,7 +63,7 @@ def test_parse_fail2ban_ban_line() -> None:
     event = parse_fail2ban_line(line)
 
     assert event is not None
-    assert event.event_type == "fail2ban_ban"
+    assert event.action == "ban"
     assert event.src_ip == "185.10.10.1"
 
 

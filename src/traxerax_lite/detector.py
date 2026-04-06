@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from traxerax_lite.models import Event, Finding
+from traxerax_lite.models import EnforcementAction, Event, Finding
 
 
 @dataclass
@@ -20,7 +20,7 @@ class DetectionState:
     threshold_alerted: set[str] = field(default_factory=set)
 
     auth_activity_ips: set[str] = field(default_factory=set)
-    fail2ban_banned_ips: set[str] = field(default_factory=set)
+    banned_ips: set[str] = field(default_factory=set)
     web_activity_ips: set[str] = field(default_factory=set)
     web_probe_ips: set[str] = field(default_factory=set)
     mail_activity_ips: set[str] = field(default_factory=set)
@@ -36,8 +36,8 @@ class DetectionState:
     )
     mail_threshold_alerted: set[str] = field(default_factory=set)
 
-    fail2ban_alerted: set[str] = field(default_factory=set)
-    web_fail2ban_alerted: set[str] = field(default_factory=set)
+    auth_enforcement_alerted: set[str] = field(default_factory=set)
+    web_enforcement_alerted: set[str] = field(default_factory=set)
     suspicious_web_alerted: set[str] = field(default_factory=set)
     repeated_http_error_alerted: set[tuple[str, int]] = field(
         default_factory=set
@@ -59,9 +59,6 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
     if event.source == "auth":
         findings.extend(_process_auth_event(event, state))
 
-    if event.source == "fail2ban":
-        findings.extend(_process_fail2ban_event(event, state))
-
     if event.source == "nginx":
         findings.extend(_process_nginx_event(event, state))
 
@@ -69,6 +66,21 @@ def process_event(event: Event, state: DetectionState) -> list[Finding]:
         findings.extend(_process_mail_event(event, state))
 
     findings.extend(_check_cross_source_correlations(event, state))
+    return findings
+
+
+def process_enforcement_action(
+    action: EnforcementAction,
+    state: DetectionState,
+) -> list[Finding]:
+    """Process one enforcement action and return any generated findings."""
+    findings: list[Finding] = []
+
+    if action.src_ip is None:
+        return findings
+
+    findings.extend(_process_fail2ban_action(action, state))
+    findings.extend(_check_enforcement_correlations(action, state))
     return findings
 
 
@@ -134,20 +146,20 @@ def _process_auth_event(
     return findings
 
 
-def _process_fail2ban_event(
-    event: Event,
+def _process_fail2ban_action(
+    action: EnforcementAction,
     state: DetectionState,
 ) -> list[Finding]:
-    """Process a normalized fail2ban event."""
+    """Process a normalized enforcement action."""
     findings: list[Finding] = []
-    ip = event.src_ip
+    ip = action.src_ip
 
-    if event.event_type == "fail2ban_ban":
-        state.fail2ban_banned_ips.add(ip)
-        state.first_fail2ban_ban_time.setdefault(ip, event.timestamp)
+    if action.action == "ban":
+        state.banned_ips.add(ip)
+        state.first_fail2ban_ban_time.setdefault(ip, action.timestamp)
 
-        if ip in state.auth_activity_ips and ip not in state.fail2ban_alerted:
-            state.fail2ban_alerted.add(ip)
+        if ip in state.auth_activity_ips and ip not in state.auth_enforcement_alerted:
+            state.auth_enforcement_alerted.add(ip)
             findings.append(
                 Finding(
                     finding_type="ip_banned_after_auth_activity",
@@ -157,12 +169,12 @@ def _process_fail2ban_event(
                         f"fail2ban: {ip}"
                     ),
                     src_ip=ip,
-                    timestamp=event.timestamp,
+                    timestamp=action.timestamp,
                 )
             )
 
-        if ip in state.web_activity_ips and ip not in state.web_fail2ban_alerted:
-            state.web_fail2ban_alerted.add(ip)
+        if ip in state.web_activity_ips and ip not in state.web_enforcement_alerted:
+            state.web_enforcement_alerted.add(ip)
             findings.append(
                 Finding(
                     finding_type="ip_banned_after_web_activity",
@@ -172,7 +184,7 @@ def _process_fail2ban_event(
                         f"fail2ban: {ip}"
                     ),
                     src_ip=ip,
-                    timestamp=event.timestamp,
+                    timestamp=action.timestamp,
                 )
             )
 
@@ -187,7 +199,7 @@ def _process_fail2ban_event(
                         f"fail2ban: {ip}"
                     ),
                     src_ip=ip,
-                    timestamp=event.timestamp,
+                    timestamp=action.timestamp,
                 )
             )
 
@@ -356,11 +368,15 @@ def _check_cross_source_correlations(
                 )
             )
 
-    if (
-        ip in state.web_probe_ips
-        and ip in state.auth_activity_ips
-        and ip in state.fail2ban_banned_ips
-    ):
+    observed_sources = 0
+    if ip in state.web_activity_ips:
+        observed_sources += 1
+    if ip in state.auth_activity_ips:
+        observed_sources += 1
+    if ip in state.mail_activity_ips:
+        observed_sources += 1
+
+    if observed_sources >= 2:
         if ip not in state.multi_source_alerted:
             state.multi_source_alerted.add(ip)
             findings.append(
@@ -368,11 +384,44 @@ def _check_cross_source_correlations(
                     finding_type="multi_source_ip_activity",
                     severity="high",
                     message=(
-                        "IP appeared across nginx, auth, and fail2ban: "
+                        "IP appeared across multiple observed sources: "
                         f"{ip}"
                     ),
                     src_ip=ip,
                     timestamp=event.timestamp,
+                )
+            )
+
+    return findings
+
+
+def _check_enforcement_correlations(
+    action: EnforcementAction,
+    state: DetectionState,
+) -> list[Finding]:
+    """Generate findings that depend on enforcement timing."""
+    findings: list[Finding] = []
+    ip = action.src_ip
+
+    web_probe_time = state.first_web_probe_time.get(ip)
+
+    if (
+        action.action == "ban"
+        and web_probe_time is not None
+        and web_probe_time < action.timestamp
+    ):
+        if ip not in state.web_to_ban_alerted:
+            state.web_to_ban_alerted.add(ip)
+            findings.append(
+                Finding(
+                    finding_type="web_probe_followed_by_fail2ban_ban",
+                    severity="medium",
+                    message=(
+                        "IP performed suspicious web probing and was later "
+                        f"banned by fail2ban: {ip}"
+                    ),
+                    src_ip=ip,
+                    timestamp=action.timestamp,
                 )
             )
 
