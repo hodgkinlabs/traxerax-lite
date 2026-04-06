@@ -71,6 +71,24 @@ class ReportSettings:
     persistent_multi_source_min_total_events: int = 4
     root_attempt_repeat_min_auth_events: int = 3
     returned_after_ban_min_returns: int = 1
+    priority_incidents_enabled: bool = True
+    priority_incidents_limit: int = 5
+    priority_incidents_min_score: int = 1
+    priority_severity_weights: dict[str, int] = field(
+        default_factory=lambda: {
+            "low": 1,
+            "medium": 2,
+            "high": 4,
+            "critical": 6,
+        }
+    )
+    priority_weight_total_findings: int = 0
+    priority_weight_total_events: int = 0
+    priority_weight_ban_count: int = 1
+    priority_weight_repeat_banned: int = 3
+    priority_weight_returned_after_ban: int = 4
+    priority_weight_persistent_multi_source: int = 3
+    priority_weight_root_attempt_repeat_ip: int = 3
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -140,6 +158,9 @@ def load_report_settings(config: dict[str, Any]) -> ReportSettings:
     report_config = _as_dict(config.get("reporting"))
     limits = _as_dict(report_config.get("limits"))
     persistence = _as_dict(report_config.get("persistence"))
+    priority = _as_dict(report_config.get("incident_priority"))
+    priority_weights = _as_dict(priority.get("weights"))
+    severity_weights = _as_dict(priority_weights.get("severity"))
 
     return ReportSettings(
         top_event_source_ips_limit=int(
@@ -165,6 +186,36 @@ def load_report_settings(config: dict[str, Any]) -> ReportSettings:
         ),
         returned_after_ban_min_returns=int(
             persistence.get("returned_after_ban_min_returns", 1)
+        ),
+        priority_incidents_enabled=bool(priority.get("enabled", True)),
+        priority_incidents_limit=int(priority.get("limit", 5)),
+        priority_incidents_min_score=int(priority.get("minimum_score", 1)),
+        priority_severity_weights={
+            "low": int(severity_weights.get("low", 1)),
+            "medium": int(severity_weights.get("medium", 2)),
+            "high": int(severity_weights.get("high", 4)),
+            "critical": int(severity_weights.get("critical", 6)),
+        },
+        priority_weight_total_findings=int(
+            priority_weights.get("total_findings", 0)
+        ),
+        priority_weight_total_events=int(
+            priority_weights.get("total_events", 0)
+        ),
+        priority_weight_ban_count=int(
+            priority_weights.get("ban_count", 1)
+        ),
+        priority_weight_repeat_banned=int(
+            priority_weights.get("repeat_banned", 3)
+        ),
+        priority_weight_returned_after_ban=int(
+            priority_weights.get("returned_after_ban", 4)
+        ),
+        priority_weight_persistent_multi_source=int(
+            priority_weights.get("persistent_multi_source", 3)
+        ),
+        priority_weight_root_attempt_repeat_ip=int(
+            priority_weights.get("root_attempt_repeat_ip", 3)
         ),
     )
 

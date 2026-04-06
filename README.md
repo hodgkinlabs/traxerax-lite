@@ -103,6 +103,21 @@ reporting:
     persistent_multi_source_min_total_events: 4
     root_attempt_repeat_min_auth_events: 3
     returned_after_ban_min_returns: 1
+  incident_priority:
+    enabled: true
+    limit: 5
+    minimum_score: 1
+    weights:
+      severity:
+        low: 1
+        medium: 2
+        high: 4
+        critical: 6
+      ban_count: 1
+      repeat_banned: 3
+      returned_after_ban: 4
+      persistent_multi_source: 3
+      root_attempt_repeat_ip: 3
 
 nginx:
   error_status_codes:
@@ -134,6 +149,9 @@ when `detection.thresholds.repeated_http_error` is not set.
 `reporting.limits` controls how many “top” IPs appear in summary reports, and
 `reporting.persistence` controls the cutoffs used for persistence-oriented
 summary sections and IP-level flags.
+`reporting.incident_priority` controls the scored `priority_incidents` section
+in the summary report, including how finding severities and persistence signals
+contribute to each IP's rank.
 
 ---
 

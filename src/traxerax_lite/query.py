@@ -127,6 +127,44 @@ def get_top_ips_by_finding_count(
     return cursor.fetchall()
 
 
+def get_incident_candidate_ips(
+    connection: sqlite3.Connection,
+) -> list[str]:
+    """Return all IPs seen in events, findings, or enforcement."""
+    cursor = connection.execute(
+        """
+        SELECT src_ip
+        FROM (
+            SELECT src_ip FROM events WHERE src_ip IS NOT NULL
+            UNION
+            SELECT src_ip FROM findings WHERE src_ip IS NOT NULL
+            UNION
+            SELECT src_ip FROM enforcement_actions WHERE src_ip IS NOT NULL
+        )
+        ORDER BY src_ip ASC
+        """
+    )
+    return [row["src_ip"] for row in cursor.fetchall()]
+
+
+def get_finding_severity_counts_for_ip(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> list[sqlite3.Row]:
+    """Return finding counts grouped by severity for an IP."""
+    cursor = connection.execute(
+        """
+        SELECT severity, COUNT(*) AS count
+        FROM findings
+        WHERE src_ip = ?
+        GROUP BY severity
+        ORDER BY count DESC, severity ASC
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchall()
+
+
 def get_repeat_banned_ips(
     connection: sqlite3.Connection,
     min_bans: int = 2,
