@@ -25,14 +25,6 @@ from traxerax_lite.parser import (
     parse_nginx_access_line,
 )
 from traxerax_lite.report_queries import build_ip_report, build_summary_report
-from traxerax_lite.reporter import (
-    format_enforcement_action,
-    format_event,
-    format_finding,
-    json_format_enforcement_action,
-    json_format_event,
-    json_format_finding,
-)
 from traxerax_lite.storage import (
     get_connection,
     initialize_database,
@@ -60,14 +52,6 @@ def main() -> None:
         for pattern in nginx_config.get("suspicious_path_patterns", [])
     ]
     local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
-
-    event_formatter = json_format_event if args.json else format_event
-    finding_formatter = json_format_finding if args.json else format_finding
-    enforcement_formatter = (
-        json_format_enforcement_action
-        if args.json
-        else format_enforcement_action
-    )
 
     connection = get_connection(args.db_path)
     initialize_database(connection)
@@ -114,17 +98,14 @@ def main() -> None:
         for record in ordered_records:
             parsed_count += 1
             if isinstance(record, Event):
-                logger.info(event_formatter(record))
                 insert_event(connection, record)
                 findings = process_event(record, state)
             else:
-                logger.info(enforcement_formatter(record))
                 insert_enforcement_action(connection, record)
                 findings = process_enforcement_action(record, state)
 
             for finding in findings:
                 finding_count += 1
-                logger.info(finding_formatter(finding))
                 insert_finding(connection, finding)
 
         logger.info("\n[SUMMARY]")

@@ -53,6 +53,61 @@ nginx:
         assert findings >= 0  # May be 0 depending on sample data
 
 
+def test_main_ingestion_only_prints_summary(caplog) -> None:
+    """Ingestion runs should not print each parsed event or finding."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        auth_log = Path(tmpdir) / "auth.log"
+
+        auth_log.write_text(
+            "\n".join(
+                [
+                    (
+                        "Mar 25 10:00:01 debian sshd[2001]: Failed password for "
+                        "invalid user admin from 185.10.10.1 port 40001 ssh2"
+                    ),
+                    (
+                        "Mar 25 10:00:02 debian sshd[2002]: Failed password for "
+                        "invalid user test from 185.10.10.1 port 40002 ssh2"
+                    ),
+                    (
+                        "Mar 25 10:00:03 debian sshd[2003]: Failed password for "
+                        "invalid user guest from 185.10.10.1 port 40003 ssh2"
+                    ),
+                ]
+            )
+            + "\n"
+        )
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            caplog.set_level("INFO")
+            sys.argv = [
+                "main.py",
+                "--db-path",
+                str(db_path),
+                "--auth-log",
+                str(auth_log),
+                "--year",
+                "2026",
+                "--json",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        combined_output = "\n".join(
+            record.getMessage() for record in caplog.records
+        )
+
+        assert "parsed_events=3" in combined_output
+        assert "generated_findings=1" in combined_output
+        assert '"event_type"' not in combined_output
+        assert '"finding_type"' not in combined_output
+
+
 def test_main_processes_sources_in_timestamp_order() -> None:
     """Cross-source detections should use event timestamps, not file order."""
     with tempfile.TemporaryDirectory() as tmpdir:
