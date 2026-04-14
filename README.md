@@ -133,11 +133,22 @@ nginx:
     - 503
     - 504
   suspicious_paths:
+    # Exact-match high-signal targets such as admin panels, CMS login files,
+    # secret/config leaks, backup artifacts, debug endpoints, and known probe
+    # URLs for common internet-facing software.
     - "/wp-login.php"
     - "/xmlrpc.php"
     - "/.env"
     - "/admin"
     - "/phpmyadmin"
+  suspicious_path_patterns:
+    # Regex patterns for broader classes of suspicious requests such as path
+    # traversal, encoded traversal, shell metacharacters, null-byte probes,
+    # leaked VCS metadata, backup archive fetches, and attempts to reach
+    # Linux command or sensitive system file paths through the URL.
+    - '(?:^|/)\.\.(?:/|%2f|%252f|\\)'
+    - '(?:;|\||`|\$\(|\${)'
+    - '(?:%00|\\x00|\x00)'
 ```
 
 `detection.thresholds` controls when threshold-based findings trigger,

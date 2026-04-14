@@ -3,7 +3,7 @@
 import re
 from datetime import datetime, tzinfo, timezone
 from typing import Iterable, Optional
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from traxerax_lite.models import EnforcementAction, Event
 
@@ -144,9 +144,35 @@ def is_suspicious_path(path: str, suspicious_paths: Iterable[str]) -> bool:
     return normalized in suspicious_paths
 
 
+def is_suspicious_request_target(
+    path: str,
+    suspicious_paths: Iterable[str],
+    suspicious_path_patterns: Iterable[re.Pattern[str]] = (),
+) -> bool:
+    """Return True if a request target matches exact paths or regex patterns."""
+    if is_suspicious_path(path, suspicious_paths):
+        return True
+
+    parsed = urlsplit(path)
+    normalized_path = parsed.path.rstrip("/") or "/"
+    candidates = {
+        path,
+        normalized_path,
+        unquote(path),
+        unquote(normalized_path),
+    }
+
+    for pattern in suspicious_path_patterns:
+        if any(pattern.search(candidate) for candidate in candidates):
+            return True
+
+    return False
+
+
 def parse_nginx_access_line(
     line: str,
     suspicious_paths: Iterable[str],
+    suspicious_path_patterns: Iterable[re.Pattern[str]] = (),
 ) -> Optional[Event]:
     """Parse a single nginx access log line."""
     stripped = line.strip()
@@ -165,7 +191,11 @@ def parse_nginx_access_line(
 
     path = match.group("path")
     event_type = "nginx_request"
-    if is_suspicious_path(path, suspicious_paths):
+    if is_suspicious_request_target(
+        path,
+        suspicious_paths,
+        suspicious_path_patterns,
+    ):
         event_type = "nginx_suspicious_request"
 
     return Event(

