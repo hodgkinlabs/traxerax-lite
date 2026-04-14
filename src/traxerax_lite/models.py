@@ -1,35 +1,36 @@
-"""Data models for Traxerax Lite."""
+"""Core normalized records that move through the pipeline."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass(slots=True)
 class Event:
-    """Normalized security event."""
+    """Normalized security event from auth, nginx, or mail telemetry."""
 
     timestamp: datetime
     source: str
     event_type: str
     raw: str
-    username: Optional[str] = None
-    src_ip: Optional[str] = None
-    port: Optional[int] = None
-    service: Optional[str] = None
-    hostname: Optional[str] = None
-    process: Optional[str] = None
-    action: Optional[str] = None
-    jail: Optional[str] = None
-    method: Optional[str] = None
-    path: Optional[str] = None
-    normalized_path: Optional[str] = None
-    query_string: Optional[str] = None
-    referrer: Optional[str] = None
-    user_agent: Optional[str] = None
-    match_reason: Optional[str] = None
-    bytes_sent: Optional[int] = None
-    status_code: Optional[int] = None
+    username: str | None = None
+    src_ip: str | None = None
+    port: int | None = None
+    service: str | None = None
+    hostname: str | None = None
+    process: str | None = None
+    action: str | None = None
+    jail: str | None = None
+    method: str | None = None
+    path: str | None = None
+    normalized_path: str | None = None
+    query_string: str | None = None
+    referrer: str | None = None
+    user_agent: str | None = None
+    match_reason: str | None = None
+    bytes_sent: int | None = None
+    status_code: int | None = None
 
 
 @dataclass(slots=True)
@@ -39,7 +40,7 @@ class Finding:
     finding_type: str
     severity: str
     message: str
-    src_ip: Optional[str]
+    src_ip: str | None
     timestamp: datetime
 
 
@@ -49,8 +50,8 @@ class EnforcementAction:
 
     timestamp: datetime
     raw: str
-    src_ip: Optional[str]
+    src_ip: str | None
     action: str
-    service: Optional[str] = None
-    process: Optional[str] = None
-    jail: Optional[str] = None
+    service: str | None = None
+    process: str | None = None
+    jail: str | None = None

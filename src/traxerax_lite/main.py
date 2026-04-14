@@ -1,4 +1,6 @@
-"""Main entry point."""
+"""CLI entry point for log ingestion and reporting."""
+
+from __future__ import annotations
 
 import logging
 import re
@@ -10,6 +12,7 @@ from traxerax_lite.baseline import should_suppress_action, should_suppress_event
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import (
+    BaselineSettings,
     load_baseline_settings,
     load_config,
     load_detection_settings,
@@ -44,7 +47,7 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     logger = logging.getLogger(__name__)
 
     config = load_config(args.config)
@@ -86,11 +89,8 @@ def main() -> None:
                 )
                 return
 
-        if (
-            not args.auth_log
-            and not args.fail2ban_log
-            and not args.nginx_log
-            and not args.mail_log
+        if not any(
+            (args.auth_log, args.fail2ban_log, args.nginx_log, args.mail_log)
         ):
             parser.error(
                 "at least one log source must be provided: "
@@ -217,7 +217,7 @@ def _seed_detection_state_from_history(
     connection: sqlite3.Connection,
     state: DetectionState,
     ordered_records: list[Event | EnforcementAction],
-    baseline_settings,
+    baseline_settings: BaselineSettings,
 ) -> None:
     """Warm the in-memory detector with recent persisted telemetry."""
     if not ordered_records:
@@ -236,6 +236,8 @@ def _seed_detection_state_from_history(
     )
     cutoff_time = earliest - timedelta(seconds=max_window_seconds)
 
+    # Replaying only the recent persistence window keeps cross-source
+    # correlations accurate without rebuilding detector state from all history.
     historical_events = connection.execute(
         """
         SELECT *

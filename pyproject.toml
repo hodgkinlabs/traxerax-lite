@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "traxerax-lite"
 version = "0.1.0"
 description = "Lightweight Linux security triage tool"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "PyYAML>=6.0.3",

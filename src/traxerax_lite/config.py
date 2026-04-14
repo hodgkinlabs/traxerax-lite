@@ -1,14 +1,35 @@
-"""Configuration loading."""
+"""Helpers for loading and normalizing YAML configuration."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Any
 
 import yaml
 
 
 DEFAULT_CONFIG_PATH = "config/default.yaml"
+DEFAULT_HTTP_ERROR_STATUSES = {
+    400,
+    401,
+    403,
+    404,
+    408,
+    429,
+    444,
+    500,
+    502,
+    503,
+    504,
+}
+DEFAULT_PRIORITY_SEVERITY_WEIGHTS = {
+    "low": 1,
+    "medium": 2,
+    "high": 4,
+    "critical": 6,
+}
 
 DEFAULT_FINDING_SEVERITIES = {
     "root_login_attempt": "medium",
@@ -37,19 +58,7 @@ class DetectionSettings:
     mail_unique_username_threshold: int = 3
     http_error_threshold: int = 3
     http_error_statuses: set[int] = field(
-        default_factory=lambda: {
-            400,
-            401,
-            403,
-            404,
-            408,
-            429,
-            444,
-            500,
-            502,
-            503,
-            504,
-        }
+        default_factory=lambda: set(DEFAULT_HTTP_ERROR_STATUSES)
     )
     auth_failure_window_seconds: int = 900
     mail_failure_window_seconds: int = 900
@@ -89,12 +98,7 @@ class ReportSettings:
     priority_incidents_limit: int = 5
     priority_incidents_min_score: int = 1
     priority_severity_weights: dict[str, int] = field(
-        default_factory=lambda: {
-            "low": 1,
-            "medium": 2,
-            "high": 4,
-            "critical": 6,
-        }
+        default_factory=lambda: dict(DEFAULT_PRIORITY_SEVERITY_WEIGHTS)
     )
     priority_weight_total_findings: int = 0
     priority_weight_total_events: int = 0
@@ -168,7 +172,7 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
             int(status_code)
             for status_code in nginx_config.get(
                 "error_status_codes",
-                DetectionSettings().http_error_statuses,
+                DEFAULT_HTTP_ERROR_STATUSES,
             )
         },
         auth_failure_window_seconds=int(
@@ -221,6 +225,8 @@ def load_baseline_settings(config: dict[str, Any]) -> BaselineSettings:
     """Return normalized baselining and suppression settings."""
     baseline_config = _as_dict(config.get("baseline"))
     suppression_config = _as_dict(config.get("suppression"))
+    # Support both the original "baseline" section and older "suppression"
+    # naming so existing configs continue to work unchanged.
     merged = {
         **baseline_config,
         **suppression_config,
@@ -304,10 +310,8 @@ def load_report_settings(config: dict[str, Any]) -> ReportSettings:
         priority_incidents_limit=int(priority.get("limit", 5)),
         priority_incidents_min_score=int(priority.get("minimum_score", 1)),
         priority_severity_weights={
-            "low": int(severity_weights.get("low", 1)),
-            "medium": int(severity_weights.get("medium", 2)),
-            "high": int(severity_weights.get("high", 4)),
-            "critical": int(severity_weights.get("critical", 6)),
+            severity: int(severity_weights.get(severity, default_weight))
+            for severity, default_weight in DEFAULT_PRIORITY_SEVERITY_WEIGHTS.items()
         },
         priority_weight_total_findings=int(
             priority_weights.get("total_findings", 0)

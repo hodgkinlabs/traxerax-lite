@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
+
+ReportBuilder = Callable[[sqlite3.Connection], str]
+RowFormatter = Callable[[sqlite3.Row], str]
 
 
 def build_hunt_report(
@@ -10,7 +14,7 @@ def build_hunt_report(
     preset: str,
 ) -> str:
     """Build one of the preset hunt reports."""
-    builders = {
+    builders: dict[str, ReportBuilder] = {
         "new-ips": _build_new_ips_report,
         "cross-source": _build_cross_source_report,
         "post-ban-returners": _build_post_ban_returners_report,
@@ -42,13 +46,12 @@ def _build_new_ips_report(connection: sqlite3.Connection) -> str:
         ORDER BY f.first_seen DESC, f.src_ip ASC
         """
     ).fetchall()
-    lines = ["[REPORT] hunt preset=new-ips", "", "new_source_ips_last_24h:"]
-    if rows:
-        for row in rows:
-            lines.append(f"  - {row['src_ip']}: first_seen={row['first_seen']}")
-    else:
-        lines.append("  - none")
-    return "\n".join(lines)
+    return _render_report(
+        title="[REPORT] hunt preset=new-ips",
+        section_name="new_source_ips_last_24h",
+        rows=rows,
+        formatter=lambda row: f"{row['src_ip']}: first_seen={row['first_seen']}",
+    )
 
 
 def _build_cross_source_report(connection: sqlite3.Connection) -> str:
@@ -67,16 +70,15 @@ def _build_cross_source_report(connection: sqlite3.Connection) -> str:
         LIMIT 20
         """
     ).fetchall()
-    lines = ["[REPORT] hunt preset=cross-source", "", "cross_source_ips:"]
-    if rows:
-        for row in rows:
-            lines.append(
-                f"  - {row['src_ip']}: sources={row['source_count']} "
-                f"events={row['total_events']} seen_in={row['sources']}"
-            )
-    else:
-        lines.append("  - none")
-    return "\n".join(lines)
+    return _render_report(
+        title="[REPORT] hunt preset=cross-source",
+        section_name="cross_source_ips",
+        rows=rows,
+        formatter=lambda row: (
+            f"{row['src_ip']}: sources={row['source_count']} "
+            f"events={row['total_events']} seen_in={row['sources']}"
+        ),
+    )
 
 
 def _build_post_ban_returners_report(connection: sqlite3.Connection) -> str:
@@ -109,20 +111,15 @@ def _build_post_ban_returners_report(connection: sqlite3.Connection) -> str:
         ORDER BY post_ban_events DESC, first_return ASC, b.src_ip ASC
         """
     ).fetchall()
-    lines = [
-        "[REPORT] hunt preset=post-ban-returners",
-        "",
-        "post_ban_returners:",
-    ]
-    if rows:
-        for row in rows:
-            lines.append(
-                f"  - {row['src_ip']}: events={row['post_ban_events']} "
-                f"first_return={row['first_return']}"
-            )
-    else:
-        lines.append("  - none")
-    return "\n".join(lines)
+    return _render_report(
+        title="[REPORT] hunt preset=post-ban-returners",
+        section_name="post_ban_returners",
+        rows=rows,
+        formatter=lambda row: (
+            f"{row['src_ip']}: events={row['post_ban_events']} "
+            f"first_return={row['first_return']}"
+        ),
+    )
 
 
 def _build_success_after_failures_report(connection: sqlite3.Connection) -> str:
@@ -139,19 +136,14 @@ def _build_success_after_failures_report(connection: sqlite3.Connection) -> str:
         LIMIT 20
         """
     ).fetchall()
-    lines = [
-        "[REPORT] hunt preset=auth-success-after-failures",
-        "",
-        "success_after_failures_candidates:",
-    ]
-    if rows:
-        for row in rows:
-            lines.append(
-                f"  - {row['timestamp']} {row['src_ip']}: {row['message']}"
-            )
-    else:
-        lines.append("  - none")
-    return "\n".join(lines)
+    return _render_report(
+        title="[REPORT] hunt preset=auth-success-after-failures",
+        section_name="success_after_failures_candidates",
+        rows=rows,
+        formatter=lambda row: (
+            f"{row['timestamp']} {row['src_ip']}: {row['message']}"
+        ),
+    )
 
 
 def _build_sprayed_users_report(connection: sqlite3.Connection) -> str:
@@ -172,16 +164,15 @@ def _build_sprayed_users_report(connection: sqlite3.Connection) -> str:
         LIMIT 20
         """
     ).fetchall()
-    lines = ["[REPORT] hunt preset=sprayed-users", "", "mail_spray_candidates:"]
-    if rows:
-        for row in rows:
-            lines.append(
-                f"  - {row['src_ip']}: usernames={row['distinct_usernames']} "
-                f"failures={row['failure_count']}"
-            )
-    else:
-        lines.append("  - none")
-    return "\n".join(lines)
+    return _render_report(
+        title="[REPORT] hunt preset=sprayed-users",
+        section_name="mail_spray_candidates",
+        rows=rows,
+        formatter=lambda row: (
+            f"{row['src_ip']}: usernames={row['distinct_usernames']} "
+            f"failures={row['failure_count']}"
+        ),
+    )
 
 
 def _build_suspicious_paths_report(connection: sqlite3.Connection) -> str:
@@ -198,13 +189,27 @@ def _build_suspicious_paths_report(connection: sqlite3.Connection) -> str:
         LIMIT 20
         """
     ).fetchall()
-    lines = ["[REPORT] hunt preset=suspicious-paths", "", "suspicious_paths:"]
+    return _render_report(
+        title="[REPORT] hunt preset=suspicious-paths",
+        section_name="suspicious_paths",
+        rows=rows,
+        formatter=lambda row: (
+            f"{row['suspicious_path']}: requests={row['request_count']} "
+            f"unique_ips={row['unique_ips']}"
+        ),
+    )
+
+
+def _render_report(
+    title: str,
+    section_name: str,
+    rows: list[sqlite3.Row],
+    formatter: RowFormatter,
+) -> str:
+    """Render a simple bullet-list hunt report section."""
+    lines = [title, "", f"{section_name}:"]
     if rows:
-        for row in rows:
-            lines.append(
-                f"  - {row['suspicious_path']}: requests={row['request_count']} "
-                f"unique_ips={row['unique_ips']}"
-            )
+        lines.extend(f"  - {formatter(row)}" for row in rows)
     else:
         lines.append("  - none")
     return "\n".join(lines)

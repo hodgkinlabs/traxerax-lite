@@ -1,4 +1,6 @@
-"""SQLite storage for Traxerax Lite."""
+"""SQLite persistence helpers for normalized telemetry."""
+
+from __future__ import annotations
 
 import hashlib
 import sqlite3
@@ -8,6 +10,28 @@ from traxerax_lite.models import EnforcementAction, Event, Finding
 
 
 DEFAULT_DB_PATH = "data/output/traxerax_lite.db"
+EVENT_HASH_FIELDS = (
+    "source",
+    "event_type",
+    "raw",
+    "username",
+    "src_ip",
+    "port",
+    "service",
+    "hostname",
+    "process",
+    "action",
+    "jail",
+    "method",
+    "path",
+    "normalized_path",
+    "query_string",
+    "referrer",
+    "user_agent",
+    "match_reason",
+    "bytes_sent",
+    "status_code",
+)
 
 
 def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
@@ -17,6 +41,7 @@ def get_connection(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
     connection = sqlite3.connect(path)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
 
@@ -127,62 +152,34 @@ def initialize_database(connection: sqlite3.Connection) -> None:
 
 def make_event_hash(event: Event) -> str:
     """Return a deterministic hash for an event."""
-    payload = "|".join(
-        [
-            event.timestamp.isoformat(sep=" "),
-            event.source,
-            event.event_type,
-            event.raw,
-            str(event.username),
-            str(event.src_ip),
-            str(event.port),
-            str(event.service),
-            str(event.hostname),
-            str(event.process),
-            str(event.action),
-            str(event.jail),
-            str(event.method),
-            str(event.path),
-            str(event.normalized_path),
-            str(event.query_string),
-            str(event.referrer),
-            str(event.user_agent),
-            str(event.match_reason),
-            str(event.bytes_sent),
-            str(event.status_code),
-        ]
+    return _hash_values(
+        event.timestamp.isoformat(sep=" "),
+        *(getattr(event, field_name) for field_name in EVENT_HASH_FIELDS),
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def make_finding_hash(finding: Finding) -> str:
     """Return a deterministic hash for a finding."""
-    payload = "|".join(
-        [
-            finding.timestamp.isoformat(sep=" "),
-            finding.finding_type,
-            finding.severity,
-            finding.message,
-            str(finding.src_ip),
-        ]
+    return _hash_values(
+        finding.timestamp.isoformat(sep=" "),
+        finding.finding_type,
+        finding.severity,
+        finding.message,
+        finding.src_ip,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def make_enforcement_action_hash(action: EnforcementAction) -> str:
     """Return a deterministic hash for an enforcement action."""
-    payload = "|".join(
-        [
-            action.timestamp.isoformat(sep=" "),
-            action.raw,
-            str(action.src_ip),
-            action.action,
-            str(action.service),
-            str(action.process),
-            str(action.jail),
-        ]
+    return _hash_values(
+        action.timestamp.isoformat(sep=" "),
+        action.raw,
+        action.src_ip,
+        action.action,
+        action.service,
+        action.process,
+        action.jail,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def insert_event(connection: sqlite3.Connection, event: Event) -> None:
@@ -325,6 +322,8 @@ def insert_enforcement_action(
 
 def _migrate_legacy_fail2ban_events(connection: sqlite3.Connection) -> None:
     """Move legacy fail2ban rows out of events into enforcement_actions."""
+    # Older database versions stored fail2ban telemetry in the events table.
+    # Keep migration local and idempotent so opening an existing database is safe.
     rows = connection.execute(
         """
         SELECT
@@ -356,19 +355,15 @@ def _migrate_legacy_fail2ban_events(connection: sqlite3.Connection) -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                hashlib.sha256(
-                    "|".join(
-                        [
-                            row["timestamp"],
-                            row["raw"],
-                            str(row["src_ip"]),
-                            str(row["action"]),
-                            str(row["service"]),
-                            str(row["process"]),
-                            str(row["jail"]),
-                        ]
-                    ).encode("utf-8")
-                ).hexdigest(),
+                _hash_values(
+                    row["timestamp"],
+                    row["raw"],
+                    row["src_ip"],
+                    row["action"],
+                    row["service"],
+                    row["process"],
+                    row["jail"],
+                ),
                 row["timestamp"],
                 row["raw"],
                 row["src_ip"],
@@ -405,3 +400,9 @@ def _ensure_column(
     connection.execute(
         f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
     )
+
+
+def _hash_values(*values: object) -> str:
+    """Return a stable SHA256 hash across a sequence of scalar values."""
+    payload = "|".join(str(value) for value in values)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
