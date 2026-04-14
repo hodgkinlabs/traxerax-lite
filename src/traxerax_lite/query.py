@@ -18,6 +18,28 @@ def get_event_counts_by_type(
     return cursor.fetchall()
 
 
+def get_summary_time_window(
+    connection: sqlite3.Connection,
+) -> sqlite3.Row | None:
+    """Return the overall reporting time window across events and enforcement."""
+    cursor = connection.execute(
+        """
+        SELECT
+            MIN(timestamp) AS first_seen,
+            MAX(timestamp) AS last_seen
+        FROM (
+            SELECT timestamp FROM events
+            UNION ALL
+            SELECT timestamp FROM enforcement_actions
+        )
+        """
+    )
+    row = cursor.fetchone()
+    if row is None or row["first_seen"] is None:
+        return None
+    return row
+
+
 def get_finding_counts_by_type(
     connection: sqlite3.Connection,
 ) -> list[sqlite3.Row]:
@@ -33,6 +55,124 @@ def get_finding_counts_by_type(
     return cursor.fetchall()
 
 
+def get_summary_unique_ip_counts(
+    connection: sqlite3.Connection,
+    min_repeat_bans: int = 2,
+) -> sqlite3.Row:
+    """Return high-value unique IP counts for environment-level reporting."""
+    cursor = connection.execute(
+        """
+        WITH observed_ips AS (
+            SELECT src_ip
+            FROM events
+            WHERE src_ip IS NOT NULL
+            UNION
+            SELECT src_ip
+            FROM findings
+            WHERE src_ip IS NOT NULL
+            UNION
+            SELECT src_ip
+            FROM enforcement_actions
+            WHERE src_ip IS NOT NULL
+        ),
+        finding_ips AS (
+            SELECT DISTINCT src_ip
+            FROM findings
+            WHERE src_ip IS NOT NULL
+        ),
+        banned_ips AS (
+            SELECT DISTINCT src_ip
+            FROM enforcement_actions
+            WHERE action = 'ban'
+              AND src_ip IS NOT NULL
+        ),
+        repeat_banned_ips AS (
+            SELECT src_ip
+            FROM enforcement_actions
+            WHERE action = 'ban'
+              AND src_ip IS NOT NULL
+            GROUP BY src_ip
+            HAVING COUNT(*) >= ?
+        ),
+        suspicious_event_ips AS (
+            SELECT DISTINCT src_ip
+            FROM events
+            WHERE src_ip IS NOT NULL
+              AND event_type = 'nginx_suspicious_request'
+        ),
+        returned_after_ban_ips AS (
+            SELECT src_ip
+            FROM (
+                WITH ban_windows AS (
+                    SELECT
+                        ban.id AS ban_id,
+                        ban.src_ip,
+                        ban.timestamp AS ban_time,
+                        (
+                            SELECT MIN(next_ban.timestamp)
+                            FROM enforcement_actions AS next_ban
+                            WHERE next_ban.src_ip = ban.src_ip
+                              AND next_ban.action = 'ban'
+                              AND next_ban.timestamp > ban.timestamp
+                        ) AS next_ban_time,
+                        (
+                            SELECT MIN(unban.timestamp)
+                            FROM enforcement_actions AS unban
+                            WHERE unban.src_ip = ban.src_ip
+                              AND unban.action = 'unban'
+                              AND unban.timestamp > ban.timestamp
+                        ) AS next_unban_time
+                    FROM enforcement_actions AS ban
+                    WHERE ban.action = 'ban'
+                      AND ban.src_ip IS NOT NULL
+                )
+                SELECT DISTINCT b.src_ip
+                FROM ban_windows AS b
+                JOIN events AS e
+                    ON e.src_ip = b.src_ip
+                WHERE e.source IN ('auth', 'nginx')
+                  AND e.timestamp > COALESCE(b.next_unban_time, b.ban_time)
+                  AND (
+                      b.next_ban_time IS NULL
+                      OR e.timestamp < b.next_ban_time
+                  )
+            )
+        )
+        SELECT
+            (SELECT COUNT(*) FROM observed_ips) AS unique_source_ips,
+            (SELECT COUNT(*) FROM finding_ips) AS unique_suspicious_ips,
+            (SELECT COUNT(*) FROM suspicious_event_ips) AS unique_web_probe_ips,
+            (SELECT COUNT(*) FROM banned_ips) AS unique_banned_ips,
+            (SELECT COUNT(*) FROM repeat_banned_ips) AS repeated_ban_ips,
+            (SELECT COUNT(*) FROM returned_after_ban_ips) AS returned_after_ban_ips
+        """
+        ,
+        (min_repeat_bans,),
+    )
+    return cursor.fetchone()
+
+
+def get_request_activity_totals(
+    connection: sqlite3.Connection,
+) -> sqlite3.Row:
+    """Return nginx request totals used for ratio calculations."""
+    cursor = connection.execute(
+        """
+        SELECT
+            SUM(CASE WHEN source = 'nginx' THEN 1 ELSE 0 END) AS total_requests,
+            SUM(
+                CASE WHEN event_type = 'nginx_suspicious_request'
+                     THEN 1 ELSE 0 END
+            ) AS suspicious_requests,
+            SUM(
+                CASE WHEN source = 'auth' THEN 1 ELSE 0 END
+            ) AS auth_events
+        FROM events
+        """
+    )
+    return cursor.fetchone()
+
+
 def get_top_event_source_ips(
     connection: sqlite3.Connection,
     limit: int = 5,
@@ -45,6 +185,43 @@ def get_top_event_source_ips(
         WHERE src_ip IS NOT NULL
         GROUP BY src_ip
         ORDER BY count DESC, src_ip ASC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    return cursor.fetchall()
+
+
+def get_top_noisy_source_ips(
+    connection: sqlite3.Connection,
+    limit: int = 5,
+) -> list[sqlite3.Row]:
+    """Return high-volume IPs separated from risk scoring."""
+    cursor = connection.execute(
+        """
+        SELECT
+            e.src_ip,
+            COUNT(*) AS total_events,
+            SUM(CASE WHEN e.source = 'nginx' THEN 1 ELSE 0 END) AS nginx_events,
+            SUM(
+                CASE WHEN e.event_type = 'nginx_suspicious_request'
+                     THEN 1 ELSE 0 END
+            ) AS suspicious_requests,
+            (
+                SELECT COUNT(*)
+                FROM findings AS f
+                WHERE f.src_ip = e.src_ip
+            ) AS finding_count,
+            (
+                SELECT COUNT(*)
+                FROM enforcement_actions AS a
+                WHERE a.src_ip = e.src_ip
+                  AND a.action = 'ban'
+            ) AS ban_count
+        FROM events AS e
+        WHERE e.src_ip IS NOT NULL
+        GROUP BY e.src_ip
+        ORDER BY total_events DESC, suspicious_requests DESC, e.src_ip ASC
         LIMIT ?
         """,
         (limit,),
@@ -218,7 +395,16 @@ def get_returned_after_ban_ips(
             SELECT
                 b.src_ip,
                 b.ban_id,
-                COUNT(e.id) AS post_ban_events
+                COUNT(e.id) AS post_ban_events,
+                MIN(e.timestamp) AS first_return_time,
+                CAST(
+                    MIN(
+                        (julianday(e.timestamp) - julianday(
+                            COALESCE(b.next_unban_time, b.ban_time)
+                        )) * 86400
+                    ) AS INTEGER
+                ) AS first_return_delay_seconds,
+                GROUP_CONCAT(DISTINCT e.source) AS return_sources
             FROM ban_windows AS b
             JOIN events AS e
                 ON e.src_ip = b.src_ip
@@ -233,7 +419,10 @@ def get_returned_after_ban_ips(
         SELECT
             src_ip,
             COUNT(*) AS return_count,
-            SUM(post_ban_events) AS post_ban_events
+            SUM(post_ban_events) AS post_ban_events,
+            MIN(first_return_time) AS first_return_time,
+            MIN(first_return_delay_seconds) AS first_return_delay_seconds,
+            GROUP_CONCAT(DISTINCT return_sources) AS return_sources
         FROM returned_bans
         GROUP BY src_ip
         ORDER BY return_count DESC, post_ban_events DESC, src_ip ASC
@@ -409,6 +598,28 @@ def get_event_counts_by_source_for_ip(
         (src_ip,),
     )
     return cursor.fetchall()
+
+
+def get_ip_source_presence(
+    connection: sqlite3.Connection,
+    src_ip: str,
+) -> sqlite3.Row:
+    """Return source-presence flags for a single IP."""
+    cursor = connection.execute(
+        """
+        SELECT
+            SUM(CASE WHEN source = 'auth' THEN 1 ELSE 0 END) AS auth_events,
+            SUM(CASE WHEN source = 'nginx' THEN 1 ELSE 0 END) AS nginx_events,
+            SUM(
+                CASE WHEN event_type = 'nginx_suspicious_request'
+                     THEN 1 ELSE 0 END
+            ) AS suspicious_web_probes
+        FROM events
+        WHERE src_ip = ?
+        """,
+        (src_ip,),
+    )
+    return cursor.fetchone()
 
 
 def get_event_counts_by_type_for_ip(

@@ -19,6 +19,7 @@ from traxerax_lite.query import (
     get_ip_enforcement_summary,
     get_ip_overview,
     get_nginx_error_status_counts_for_ip,
+    get_ip_source_presence,
     get_ip_persistence_stats,
     get_ip_post_ban_activity_count,
     get_ip_post_ban_return_count,
@@ -26,12 +27,13 @@ from traxerax_lite.query import (
     get_ips_seen_in_auth_and_fail2ban,
     get_ips_with_root_attempt_and_ban,
     get_persistent_multi_source_ips,
+    get_request_activity_totals,
     get_repeat_banned_ips,
     get_returned_after_ban_ips,
     get_root_attempt_ips_with_repeat_activity,
-    get_top_event_source_ips,
-    get_top_finding_source_ips,
-    get_top_ips_by_finding_count,
+    get_summary_time_window,
+    get_summary_unique_ip_counts,
+    get_top_noisy_source_ips,
 )
 
 
@@ -43,23 +45,20 @@ def build_summary_report(
     if settings is None:
         settings = ReportSettings()
 
+    time_window = get_summary_time_window(connection)
     event_counts = get_event_counts_by_type(connection)
     finding_counts = get_finding_counts_by_type(connection)
-    top_event_ips = get_top_event_source_ips(
+    unique_ip_counts = get_summary_unique_ip_counts(
         connection,
-        limit=settings.top_event_source_ips_limit,
+        min_repeat_bans=settings.repeat_banned_min_bans,
     )
-    top_finding_ips = get_top_finding_source_ips(
+    request_totals = get_request_activity_totals(connection)
+    top_noisy_ips = get_top_noisy_source_ips(
         connection,
-        limit=settings.top_finding_source_ips_limit,
+        limit=settings.top_noisy_source_ips_limit,
     )
     auth_enforced_ips = get_ips_seen_in_auth_and_fail2ban(connection)
     root_then_ban_ips = get_ips_with_root_attempt_and_ban(connection)
-    top_ips_by_finding_count = get_top_ips_by_finding_count(
-        connection,
-        limit=settings.top_ips_by_finding_count_limit,
-    )
-
     repeat_banned_ips = get_repeat_banned_ips(
         connection,
         min_bans=settings.repeat_banned_min_bans,
@@ -78,6 +77,77 @@ def build_summary_report(
     lines.append("[REPORT] summary")
     lines.append("")
 
+    total_events = sum(row["count"] for row in event_counts)
+    total_findings = sum(row["count"] for row in finding_counts)
+    total_requests = request_totals["total_requests"] or 0
+    suspicious_requests = request_totals["suspicious_requests"] or 0
+    unique_source_ips = unique_ip_counts["unique_source_ips"] or 0
+    unique_suspicious_ips = unique_ip_counts["unique_suspicious_ips"] or 0
+    unique_banned_ips = unique_ip_counts["unique_banned_ips"] or 0
+    repeated_ban_ips = unique_ip_counts["repeated_ban_ips"] or 0
+    returned_after_ban_ip_count = (
+        unique_ip_counts["returned_after_ban_ips"] or 0
+    )
+
+    lines.append("reporting_window:")
+    if time_window is not None:
+        lines.append(f"  - first_seen: {time_window['first_seen']}")
+        lines.append(f"  - last_seen: {time_window['last_seen']}")
+        lines.append(
+            f"  - duration: "
+            f"{_format_time_window_duration(time_window['first_seen'], time_window['last_seen'])}"
+        )
+    else:
+        lines.append("  - none")
+
+    lines.append("")
+    lines.append("environment_overview:")
+    lines.append(f"  - total_events: {total_events}")
+    lines.append(f"  - total_findings: {total_findings}")
+    lines.append(f"  - total_requests: {total_requests}")
+    lines.append(f"  - suspicious_requests: {suspicious_requests}")
+    lines.append(f"  - total_unique_source_ips: {unique_source_ips}")
+    lines.append(f"  - total_unique_suspicious_ips: {unique_suspicious_ips}")
+    lines.append(f"  - total_unique_banned_ips: {unique_banned_ips}")
+    lines.append(f"  - total_ips_with_repeated_bans: {repeated_ban_ips}")
+    lines.append(
+        f"  - total_ips_that_returned_after_ban: "
+        f"{returned_after_ban_ip_count}"
+    )
+
+    lines.append("")
+    lines.append("ratios:")
+    lines.append(
+        f"  - suspicious_requests_pct_of_all_requests: "
+        f"{_format_percent(suspicious_requests, total_requests)}"
+    )
+    lines.append(
+        f"  - finding_bearing_ips_pct_of_unique_source_ips: "
+        f"{_format_percent(unique_suspicious_ips, unique_source_ips)}"
+    )
+    lines.append(
+        f"  - repeat_banned_ips_pct_of_banned_ips: "
+        f"{_format_percent(repeated_ban_ips, unique_banned_ips)}"
+    )
+    lines.append(
+        f"  - returned_after_ban_ips_pct_of_banned_ips: "
+        f"{_format_percent(returned_after_ban_ip_count, unique_banned_ips)}"
+    )
+
+    lines.append("")
+    lines.append("bottom_line_assessment:")
+    for line in _build_bottom_line_assessment(
+        connection=connection,
+        settings=settings,
+        unique_source_ips=unique_source_ips,
+        unique_suspicious_ips=unique_suspicious_ips,
+        unique_banned_ips=unique_banned_ips,
+        repeated_ban_ips=repeated_ban_ips,
+        returned_after_ban_ip_count=returned_after_ban_ip_count,
+    ):
+        lines.append(f"  - {line}")
+
+    lines.append("")
     lines.append("event_counts_by_type:")
     if event_counts:
         for row in event_counts:
@@ -94,15 +164,14 @@ def build_summary_report(
         lines.append("  - none")
 
     lines.append("")
-    lines.append("priority_incidents:")
+    lines.append("top_risky_source_ips:")
     priority_incidents = _build_priority_incidents(connection, settings)
     if priority_incidents:
         for incident in priority_incidents:
             lines.append(
                 f"  - {incident['src_ip']}: "
                 f"score={incident['score']} "
-                f"findings={incident['total_findings']} "
-                f"events={incident['total_events']} "
+                f"severity={incident['severity_summary']} "
                 f"bans={incident['ban_count']} "
                 f"reasons={incident['reasons']}"
             )
@@ -110,18 +179,17 @@ def build_summary_report(
         lines.append("  - none")
 
     lines.append("")
-    lines.append("top_event_source_ips:")
-    if top_event_ips:
-        for row in top_event_ips:
-            lines.append(f"  - {row['src_ip']}: {row['count']}")
-    else:
-        lines.append("  - none")
-
-    lines.append("")
-    lines.append("top_finding_source_ips:")
-    if top_finding_ips:
-        for row in top_finding_ips:
-            lines.append(f"  - {row['src_ip']}: {row['count']}")
+    lines.append("top_noisy_source_ips:")
+    if top_noisy_ips:
+        for row in top_noisy_ips:
+            lines.append(
+                f"  - {row['src_ip']}: "
+                f"events={row['total_events']} "
+                f"nginx={row['nginx_events']} "
+                f"suspicious_requests={row['suspicious_requests']} "
+                f"findings={row['finding_count']} "
+                f"bans={row['ban_count']}"
+            )
     else:
         lines.append("  - none")
 
@@ -142,17 +210,9 @@ def build_summary_report(
         lines.append("  - none")
 
     lines.append("")
-    lines.append("top_ips_by_finding_count:")
-    if top_ips_by_finding_count:
-        for row in top_ips_by_finding_count:
-            lines.append(f"  - {row['src_ip']}: {row['count']}")
-    else:
-        lines.append("  - none")
-
-    lines.append("")
     lines.append("repeat_banned_ips:")
     if repeat_banned_ips:
-        for row in repeat_banned_ips:
+        for row in repeat_banned_ips[: settings.repeat_banned_ips_limit]:
             lines.append(f"  - {row['src_ip']}: {row['ban_count']}")
     else:
         lines.append("  - none")
@@ -160,13 +220,19 @@ def build_summary_report(
     lines.append("")
     lines.append("returned_after_ban_ips:")
     if returned_after_ban_ips:
+        printed_count = 0
         for row in returned_after_ban_ips:
             if row["return_count"] >= settings.returned_after_ban_min_returns:
                 lines.append(
                     f"  - {row['src_ip']}: "
                     f"returns={row['return_count']} "
-                    f"events={row['post_ban_events']}"
+                    f"events={row['post_ban_events']} "
+                    f"first_return_after={_format_duration_seconds(row['first_return_delay_seconds'])} "
+                    f"sources={row['return_sources'] or 'unknown'}"
                 )
+                printed_count += 1
+            if printed_count >= settings.returned_after_ban_ips_limit:
+                break
         if lines[-1] == "returned_after_ban_ips:":
             lines.append("  - none")
     else:
@@ -237,6 +303,10 @@ def build_ip_report(
     if overview is not None:
         lines.append(f"  - first_seen: {overview['first_seen']}")
         lines.append(f"  - last_seen: {overview['last_seen']}")
+        lines.append(
+            f"  - active_window: "
+            f"{_format_time_window_duration(overview['first_seen'], overview['last_seen'])}"
+        )
         lines.append(f"  - total_events: {overview['total_events']}")
         lines.append(f"  - total_findings: {total_findings}")
     else:
@@ -441,6 +511,125 @@ def _format_ban_delay(
     return f"{delta}s"
 
 
+def _format_time_window_duration(
+    first_seen: str | None,
+    last_seen: str | None,
+) -> str:
+    """Format a reporting window duration from two timestamps."""
+    if first_seen is None or last_seen is None:
+        return "none"
+    delta_seconds = int(
+        (
+            datetime.fromisoformat(last_seen)
+            - datetime.fromisoformat(first_seen)
+        ).total_seconds()
+    )
+    return _format_duration_seconds(delta_seconds)
+
+
+def _format_duration_seconds(seconds: int | None) -> str:
+    """Format a duration in seconds as a compact human-readable string."""
+    if seconds is None or seconds < 0:
+        return "unknown"
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        minutes, remainder = divmod(seconds, 60)
+        return f"{minutes}m{remainder:02d}s"
+    if seconds < 86400:
+        hours, remainder = divmod(seconds, 3600)
+        minutes = remainder // 60
+        return f"{hours}h{minutes:02d}m"
+    days, remainder = divmod(seconds, 86400)
+    hours = remainder // 3600
+    return f"{days}d{hours:02d}h"
+
+
+def _format_percent(part: int, whole: int) -> str:
+    """Format a ratio as a fraction and percentage."""
+    if whole <= 0:
+        return "0/0 (0.0%)"
+    return f"{part}/{whole} ({(part / whole) * 100:.1f}%)"
+
+
+def _build_bottom_line_assessment(
+    connection: sqlite3.Connection,
+    settings: ReportSettings,
+    unique_source_ips: int,
+    unique_suspicious_ips: int,
+    unique_banned_ips: int,
+    repeated_ban_ips: int,
+    returned_after_ban_ip_count: int,
+) -> list[str]:
+    """Summarize whether the report looks noisy, targeted, or persistent."""
+    priority_incidents = _build_priority_incidents(connection, settings)
+    highest_score = 0 if not priority_incidents else priority_incidents[0]["score"]
+    targeted_signal_count = 0
+    if repeated_ban_ips:
+        targeted_signal_count += 1
+    if returned_after_ban_ip_count:
+        targeted_signal_count += 1
+    targeted_signal_count += sum(
+        1
+        for incident in priority_incidents
+        if any(
+            reason in incident["reasons"]
+            for reason in (
+                "returned_after_ban",
+                "multi_source",
+                "auth_web_crossover",
+                "web_probe_followed_by_ban",
+            )
+        )
+    )
+
+    likely_targeted = targeted_signal_count >= 2 or highest_score >= 10
+
+    if unique_suspicious_ips == 0 and unique_banned_ips == 0:
+        overall = "Very little hostile behavior was detected in this window."
+    elif likely_targeted:
+        overall = (
+            "This does not look like ordinary background radiation alone; "
+            "at least one IP shows targeted or persistent follow-up behavior."
+        )
+    elif unique_suspicious_ips <= max(3, unique_source_ips // 10):
+        overall = (
+            "Most observed activity is consistent with internet background "
+            "radiation and broad automated scanning."
+        )
+    else:
+        overall = (
+            "The activity looks mixed: mostly commodity scanning, with a "
+            "smaller set of IPs worth deeper review."
+        )
+
+    if unique_banned_ips == 0:
+        fail2ban_effective = "unknown: no bans were recorded in this window"
+    elif returned_after_ban_ip_count == 0:
+        fail2ban_effective = (
+            "yes: bans were recorded and no post-ban return activity was observed"
+        )
+    else:
+        fail2ban_effective = (
+            "mixed: bans interrupted activity, but at least one banned IP "
+            "returned afterward"
+        )
+
+    persistence = (
+        "yes"
+        if repeated_ban_ips > 0 or returned_after_ban_ip_count > 0
+        else "no"
+    )
+
+    return [
+        f"overall_assessment: {overall}",
+        f"normal_background_radiation_dominant: {'no' if likely_targeted else 'yes'}",
+        f"likely_targeted_activity_present: {'yes' if likely_targeted else 'no'}",
+        f"fail2ban_appeared_effective: {fail2ban_effective}",
+        f"evidence_of_persistence_beyond_commodity_scanning: {persistence}",
+    ]
+
+
 def _build_priority_incidents(
     connection: sqlite3.Connection,
     settings: ReportSettings,
@@ -458,6 +647,7 @@ def _build_priority_incidents(
         persistence = get_ip_persistence_stats(connection, src_ip)
         post_ban_return_count = get_ip_post_ban_return_count(connection, src_ip)
         severity_rows = get_finding_severity_counts_for_ip(connection, src_ip)
+        source_presence = get_ip_source_presence(connection, src_ip)
 
         ban_count = 0 if enforcement is None else (enforcement["ban_count"] or 0)
         root_attempt_count = 0
@@ -467,6 +657,27 @@ def _build_priority_incidents(
             root_attempt_count = persistence["root_attempt_count"] or 0
             auth_event_count = persistence["auth_event_count"] or 0
             source_count = persistence["source_count"] or 0
+        nginx_event_count = 0 if source_presence is None else (
+            source_presence["nginx_events"] or 0
+        )
+        suspicious_web_probe_count = 0 if source_presence is None else (
+            source_presence["suspicious_web_probes"] or 0
+        )
+        auth_web_crossover = auth_event_count > 0 and nginx_event_count > 0
+        bursty_activity = False
+        if (
+            overview is not None
+            and overview["first_seen"] is not None
+            and overview["last_seen"] is not None
+            and total_events >= 3
+        ):
+            activity_span_seconds = int(
+                (
+                    datetime.fromisoformat(overview["last_seen"])
+                    - datetime.fromisoformat(overview["first_seen"])
+                ).total_seconds()
+            )
+            bursty_activity = activity_span_seconds <= 3600
 
         repeat_banned = ban_count >= settings.repeat_banned_min_bans
         returned_after_ban = (
@@ -483,12 +694,14 @@ def _build_priority_incidents(
 
         score = 0
         reasons: list[str] = []
+        severity_summary_parts: list[str] = []
 
         for row in severity_rows:
             severity = row["severity"]
             count = row["count"]
             weight = settings.priority_severity_weights.get(severity, 0)
             contribution = weight * count
+            severity_summary_parts.append(f"{severity}x{count}")
             if contribution > 0:
                 score += contribution
                 reasons.append(f"{severity}x{count}")
@@ -521,6 +734,25 @@ def _build_priority_incidents(
             score += settings.priority_weight_root_attempt_repeat_ip
             reasons.append("root_attempt_repeat")
 
+        if auth_web_crossover:
+            score += settings.priority_weight_auth_web_crossover
+            reasons.append("auth_web_crossover")
+
+        if bursty_activity:
+            score += settings.priority_weight_bursty_activity
+            reasons.append("bursty_activity")
+
+        if suspicious_web_probe_count:
+            score += (
+                suspicious_web_probe_count
+                * settings.priority_weight_suspicious_web_probe
+            )
+            reasons.append(f"suspicious_web_probes={suspicious_web_probe_count}")
+
+        if suspicious_web_probe_count and ban_count:
+            score += settings.priority_weight_web_probe_followed_by_ban
+            reasons.append("web_probe_followed_by_ban")
+
         if score < settings.priority_incidents_min_score:
             continue
 
@@ -531,6 +763,11 @@ def _build_priority_incidents(
                 "total_findings": total_findings,
                 "total_events": total_events,
                 "ban_count": ban_count,
+                "severity_summary": (
+                    ",".join(severity_summary_parts)
+                    if severity_summary_parts
+                    else "none"
+                ),
                 "reasons": ",".join(reasons) if reasons else "none",
             }
         )
@@ -538,9 +775,8 @@ def _build_priority_incidents(
     incidents.sort(
         key=lambda incident: (
             -incident["score"],
-            -incident["total_findings"],
-            -incident["total_events"],
+            -incident["ban_count"],
             incident["src_ip"],
         )
     )
-    return incidents[: settings.priority_incidents_limit]
+    return incidents[: settings.top_risky_source_ips_limit]

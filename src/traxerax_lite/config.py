@@ -65,9 +65,10 @@ class DetectionSettings:
 class ReportSettings:
     """Normalized report settings derived from YAML config."""
 
-    top_event_source_ips_limit: int = 5
-    top_finding_source_ips_limit: int = 5
-    top_ips_by_finding_count_limit: int = 5
+    top_noisy_source_ips_limit: int = 5
+    top_risky_source_ips_limit: int = 5
+    repeat_banned_ips_limit: int = 5
+    returned_after_ban_ips_limit: int = 5
     repeat_banned_min_bans: int = 2
     persistent_multi_source_min_sources: int = 2
     persistent_multi_source_min_total_events: int = 4
@@ -91,6 +92,10 @@ class ReportSettings:
     priority_weight_returned_after_ban: int = 4
     priority_weight_persistent_multi_source: int = 3
     priority_weight_root_attempt_repeat_ip: int = 3
+    priority_weight_auth_web_crossover: int = 3
+    priority_weight_bursty_activity: int = 2
+    priority_weight_suspicious_web_probe: int = 2
+    priority_weight_web_probe_followed_by_ban: int = 3
 
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
@@ -168,14 +173,23 @@ def load_report_settings(config: dict[str, Any]) -> ReportSettings:
     severity_weights = _as_dict(priority_weights.get("severity"))
 
     return ReportSettings(
-        top_event_source_ips_limit=int(
-            limits.get("top_event_source_ips", 5)
+        top_noisy_source_ips_limit=int(
+            limits.get(
+                "top_noisy_source_ips",
+                limits.get("top_event_source_ips", 5),
+            )
         ),
-        top_finding_source_ips_limit=int(
-            limits.get("top_finding_source_ips", 5)
+        top_risky_source_ips_limit=int(
+            limits.get(
+                "top_risky_source_ips",
+                limits.get("top_finding_source_ips", 5),
+            )
         ),
-        top_ips_by_finding_count_limit=int(
-            limits.get("top_ips_by_finding_count", 5)
+        repeat_banned_ips_limit=int(
+            limits.get("repeat_banned_ips", 5)
+        ),
+        returned_after_ban_ips_limit=int(
+            limits.get("returned_after_ban_ips", 5)
         ),
         repeat_banned_min_bans=int(
             persistence.get("repeat_banned_min_bans", 2)
@@ -221,6 +235,18 @@ def load_report_settings(config: dict[str, Any]) -> ReportSettings:
         ),
         priority_weight_root_attempt_repeat_ip=int(
             priority_weights.get("root_attempt_repeat_ip", 3)
+        ),
+        priority_weight_auth_web_crossover=int(
+            priority_weights.get("auth_web_crossover", 3)
+        ),
+        priority_weight_bursty_activity=int(
+            priority_weights.get("bursty_activity", 2)
+        ),
+        priority_weight_suspicious_web_probe=int(
+            priority_weights.get("suspicious_web_probe", 2)
+        ),
+        priority_weight_web_probe_followed_by_ban=int(
+            priority_weights.get("web_probe_followed_by_ban", 3)
         ),
     )
 

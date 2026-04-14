@@ -113,13 +113,17 @@ def test_build_summary_report_includes_persistence_sections() -> None:
     report = build_summary_report(connection)
 
     assert "[REPORT] summary" in report
-    assert "priority_incidents:" in report
+    assert "reporting_window:" in report
+    assert "bottom_line_assessment:" in report
+    assert "top_risky_source_ips:" in report
+    assert "top_noisy_source_ips:" in report
     assert "repeat_banned_ips:" in report
     assert "returned_after_ban_ips:" in report
     assert "persistent_multi_source_ips:" in report
     assert "root_attempt_ips_with_repeat_activity:" in report
     assert "185.10.10.1" in report
     assert "returns=1" in report
+    assert "first_return_after=" in report
 
     connection.close()
 
@@ -211,6 +215,7 @@ def test_build_ip_report_includes_persistence_flags() -> None:
 
     assert "[REPORT] ip=185.10.10.1" in report
     assert "persistence_flags:" in report
+    assert "active_window:" in report
     assert "source_count: 2" in report
     assert "ban_count: 1" in report
     assert "root_attempt_count: 1" in report
@@ -329,33 +334,22 @@ def test_build_summary_report_respects_configurable_limits_and_cutoffs() -> None
     report = build_summary_report(
         connection,
         ReportSettings(
-            top_event_source_ips_limit=2,
-            top_finding_source_ips_limit=2,
-            top_ips_by_finding_count_limit=2,
+            top_noisy_source_ips_limit=2,
+            top_risky_source_ips_limit=2,
             persistent_multi_source_min_total_events=5,
             root_attempt_repeat_min_auth_events=3,
             returned_after_ban_min_returns=2,
         ),
     )
 
-    top_event_section = report.split("top_event_source_ips:\n", 1)[1].split(
-        "\n\ntop_finding_source_ips:",
-        1,
-    )[0]
-    top_finding_section = report.split("top_finding_source_ips:\n", 1)[1].split(
+    top_noisy_section = report.split("top_noisy_source_ips:\n", 1)[1].split(
         "\n\nauth_ips_with_enforcement:",
         1,
     )[0]
-    top_finding_count_section = report.split(
-        "top_ips_by_finding_count:\n",
-        1,
-    )[1].split("\n\nrepeat_banned_ips:", 1)[0]
 
-    assert "203.0.113.10" not in top_event_section
-    assert "203.0.113.11: 3" in top_event_section
-    assert "203.0.113.12: 5" in top_event_section
-    assert "203.0.113.10" not in top_finding_section
-    assert "203.0.113.10" not in top_finding_count_section
+    assert "203.0.113.10" not in top_noisy_section
+    assert "203.0.113.11: events=3" in top_noisy_section
+    assert "203.0.113.12: events=5" in top_noisy_section
     assert "returned_after_ban_ips:\n  - none" in report
     assert "persistent_multi_source_ips:" in report
     assert "203.0.113.12: events=5 sources=2" in report
@@ -453,7 +447,7 @@ def test_build_summary_report_prioritizes_incidents_from_configured_weights() ->
     report = build_summary_report(
         connection,
         ReportSettings(
-            priority_incidents_limit=2,
+            top_risky_source_ips_limit=2,
             priority_weight_total_events=0,
             priority_weight_ban_count=1,
             priority_weight_root_attempt_repeat_ip=5,
@@ -466,8 +460,8 @@ def test_build_summary_report_prioritizes_incidents_from_configured_weights() ->
         ),
     )
 
-    priority_section = report.split("priority_incidents:\n", 1)[1].split(
-        "\n\ntop_event_source_ips:",
+    priority_section = report.split("top_risky_source_ips:\n", 1)[1].split(
+        "\n\ntop_noisy_source_ips:",
         1,
     )[0]
     priority_lines = [
@@ -506,7 +500,7 @@ def test_build_summary_report_can_disable_priority_incidents_section() -> None:
         ReportSettings(priority_incidents_enabled=False),
     )
 
-    assert "priority_incidents:\n  - none" in report
+    assert "top_risky_source_ips:\n  - none" in report
 
     connection.close()
 

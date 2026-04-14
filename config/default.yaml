@@ -37,9 +37,10 @@ detection:
 
 reporting:
   limits:
-    top_event_source_ips: 5
-    top_finding_source_ips: 5
-    top_ips_by_finding_count: 5
+    top_noisy_source_ips: 5
+    top_risky_source_ips: 5
+    repeat_banned_ips: 5
+    returned_after_ban_ips: 5
   persistence:
     repeat_banned_min_bans: 2
     persistent_multi_source_min_sources: 2
@@ -63,6 +64,10 @@ reporting:
       returned_after_ban: 4
       persistent_multi_source: 3
       root_attempt_repeat_ip: 3
+      auth_web_crossover: 3
+      bursty_activity: 2
+      suspicious_web_probe: 2
+      web_probe_followed_by_ban: 3
 
 nginx:
   repeated_error_threshold: 3
