@@ -141,6 +141,31 @@ def test_parse_nginx_regex_matches_encoded_command_probe() -> None:
     assert event.event_type == "nginx_suspicious_request"
 
 
+def test_parse_nginx_enriches_context_fields() -> None:
+    """Nginx parsing should preserve normalized path and request context."""
+    line = (
+        '185.10.10.1 - - [25/Mar/2026:10:00:04 +0000] '
+        '"GET /search?q=admin HTTP/1.1" 404 153 '
+        '"https://example.test/" "curl/8.7.1"'
+    )
+
+    event = parse_nginx_access_line(
+        line,
+        suspicious_paths=set(),
+        suspicious_path_patterns=[
+            re.compile(r"(?:admin)", re.IGNORECASE)
+        ],
+    )
+
+    assert event is not None
+    assert event.normalized_path == "/search"
+    assert event.query_string == "q=admin"
+    assert event.referrer == "https://example.test/"
+    assert event.user_agent == "curl/8.7.1"
+    assert event.bytes_sent == 153
+    assert event.match_reason is not None
+
+
 def test_parse_dovecot_failed_login() -> None:
     """Dovecot failed login lines should parse into an Event."""
     line = (

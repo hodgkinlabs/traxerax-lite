@@ -1,8 +1,8 @@
 """Detection logic for Traxerax Lite."""
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from traxerax_lite.config import DetectionSettings
 from traxerax_lite.models import EnforcementAction, Event, Finding
@@ -17,6 +17,14 @@ class DetectionState:
     mail_unique_username_threshold: int = 3
     http_error_statuses: set[int] = field(default_factory=set)
     http_error_threshold: int = 3
+    auth_failure_window_seconds: int = 900
+    mail_failure_window_seconds: int = 900
+    mail_unique_username_window_seconds: int = 900
+    http_error_window_seconds: int = 900
+    success_after_failures_window_seconds: int = 3600
+    web_auth_correlation_window_seconds: int = 3600
+    web_ban_correlation_window_seconds: int = 3600
+    multi_source_window_seconds: int = 3600
     enabled_rules: dict[str, bool] = field(
         default_factory=DetectionSettings().enabled_rules.copy
     )
@@ -24,8 +32,8 @@ class DetectionState:
         default_factory=DetectionSettings().finding_severities.copy
     )
 
-    failed_counts: dict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
+    auth_failure_times: dict[str, deque[datetime]] = field(
+        default_factory=lambda: defaultdict(deque)
     )
     threshold_alerted: set[str] = field(default_factory=set)
 
@@ -37,15 +45,18 @@ class DetectionState:
     first_auth_activity_time: dict[str, datetime] = field(default_factory=dict)
     first_fail2ban_ban_time: dict[str, datetime] = field(default_factory=dict)
     first_web_probe_time: dict[str, datetime] = field(default_factory=dict)
-    http_error_counts: dict[tuple[str, int], int] = field(
-        default_factory=lambda: defaultdict(int)
+    source_activity_times: dict[str, dict[str, deque[datetime]]] = field(
+        default_factory=lambda: defaultdict(lambda: defaultdict(deque))
+    )
+    http_error_times: dict[tuple[str, int], deque[datetime]] = field(
+        default_factory=lambda: defaultdict(deque)
     )
 
-    mail_failed_counts: dict[str, int] = field(
-        default_factory=lambda: defaultdict(int)
+    mail_failed_times: dict[str, deque[datetime]] = field(
+        default_factory=lambda: defaultdict(deque)
     )
-    mail_failed_usernames: dict[str, set[str]] = field(
-        default_factory=lambda: defaultdict(set)
+    mail_failed_usernames: dict[str, deque[tuple[datetime, str]]] = field(
+        default_factory=lambda: defaultdict(deque)
     )
     mail_threshold_alerted: set[str] = field(default_factory=set)
     mail_password_spray_alerted: set[str] = field(default_factory=set)
@@ -73,6 +84,22 @@ class DetectionState:
             ),
             http_error_statuses=set(settings.http_error_statuses),
             http_error_threshold=settings.http_error_threshold,
+            auth_failure_window_seconds=settings.auth_failure_window_seconds,
+            mail_failure_window_seconds=settings.mail_failure_window_seconds,
+            mail_unique_username_window_seconds=(
+                settings.mail_unique_username_window_seconds
+            ),
+            http_error_window_seconds=settings.http_error_window_seconds,
+            success_after_failures_window_seconds=(
+                settings.success_after_failures_window_seconds
+            ),
+            web_auth_correlation_window_seconds=(
+                settings.web_auth_correlation_window_seconds
+            ),
+            web_ban_correlation_window_seconds=(
+                settings.web_ban_correlation_window_seconds
+            ),
+            multi_source_window_seconds=settings.multi_source_window_seconds,
             enabled_rules=dict(settings.enabled_rules),
             finding_severities=dict(settings.finding_severities),
         )
@@ -123,6 +150,7 @@ def _process_auth_event(
 
     state.auth_activity_ips.add(ip)
     state.first_auth_activity_time.setdefault(ip, event.timestamp)
+    _track_source_activity(state, ip, "auth", event.timestamp)
 
     if event.event_type == "ssh_root_login_attempt":
         finding = _make_finding(
@@ -136,10 +164,16 @@ def _process_auth_event(
             findings.append(finding)
 
     if event.event_type in {"ssh_failed_login", "ssh_root_login_attempt"}:
-        state.failed_counts[ip] += 1
+        failures = state.auth_failure_times[ip]
+        failures.append(event.timestamp)
+        _prune_datetimes(
+            failures,
+            event.timestamp,
+            state.auth_failure_window_seconds,
+        )
 
         if (
-            state.failed_counts[ip] >= state.auth_failed_login_threshold
+            len(failures) >= state.auth_failed_login_threshold
             and ip not in state.threshold_alerted
         ):
             state.threshold_alerted.add(ip)
@@ -148,7 +182,8 @@ def _process_auth_event(
                 finding_type="repeated_failed_login",
                 message=(
                     "Repeated failed SSH logins detected from "
-                    f"{ip} ({state.failed_counts[ip]} failures)"
+                    f"{ip} ({len(failures)} failures within "
+                    f"{state.auth_failure_window_seconds}s)"
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -157,14 +192,21 @@ def _process_auth_event(
                 findings.append(finding)
 
     if event.event_type == "ssh_success_login":
-        prior_failures = state.failed_counts[ip]
+        failures = state.auth_failure_times[ip]
+        _prune_datetimes(
+            failures,
+            event.timestamp,
+            state.success_after_failures_window_seconds,
+        )
+        prior_failures = len(failures)
         if prior_failures >= 1:
             finding = _make_finding(
                 state=state,
                 finding_type="success_after_failures",
                 message=(
                     "Successful SSH login after prior failures from "
-                    f"{ip} ({prior_failures} failures before success)"
+                    f"{ip} ({prior_failures} failures within "
+                    f"{state.success_after_failures_window_seconds}s before success)"
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -244,6 +286,7 @@ def _process_nginx_event(
     ip = event.src_ip
 
     state.web_activity_ips.add(ip)
+    _track_source_activity(state, ip, "nginx", event.timestamp)
 
     if event.event_type == "nginx_suspicious_request":
         state.web_probe_ips.add(ip)
@@ -257,6 +300,11 @@ def _process_nginx_event(
                 message=(
                     "Suspicious web probe detected from "
                     f"{ip} path={event.path}"
+                    + (
+                        f" reason={event.match_reason}"
+                        if event.match_reason
+                        else ""
+                    )
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -269,10 +317,16 @@ def _process_nginx_event(
         and event.status_code in state.http_error_statuses
     ):
         error_key = (ip, event.status_code)
-        state.http_error_counts[error_key] += 1
+        error_times = state.http_error_times[error_key]
+        error_times.append(event.timestamp)
+        _prune_datetimes(
+            error_times,
+            event.timestamp,
+            state.http_error_window_seconds,
+        )
 
         if (
-            state.http_error_counts[error_key] >= state.http_error_threshold
+            len(error_times) >= state.http_error_threshold
             and error_key not in state.repeated_http_error_alerted
         ):
             state.repeated_http_error_alerted.add(error_key)
@@ -282,7 +336,8 @@ def _process_nginx_event(
                 message=(
                     "Repeated HTTP error responses detected from "
                     f"{ip} (status={event.status_code}, "
-                    f"threshold={state.http_error_threshold})"
+                    f"threshold={state.http_error_threshold}, "
+                    f"window={state.http_error_window_seconds}s)"
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -302,18 +357,35 @@ def _process_mail_event(
     ip = event.src_ip
 
     state.mail_activity_ips.add(ip)
+    _track_source_activity(state, ip, "mail", event.timestamp)
 
     if event.event_type in {
         "dovecot_failed_login",
         "postfix_sasl_auth_failed",
     }:
-        state.mail_failed_counts[ip] += 1
+        failure_times = state.mail_failed_times[ip]
+        failure_times.append(event.timestamp)
+        _prune_datetimes(
+            failure_times,
+            event.timestamp,
+            state.mail_failure_window_seconds,
+        )
 
         if event.username:
-            state.mail_failed_usernames[ip].add(event.username)
+            username_events = state.mail_failed_usernames[ip]
+            username_events.append((event.timestamp, event.username))
+            _prune_pairs(
+                username_events,
+                event.timestamp,
+                state.mail_unique_username_window_seconds,
+            )
+            unique_usernames = {
+                username
+                for _, username in username_events
+            }
 
             if (
-                len(state.mail_failed_usernames[ip])
+                len(unique_usernames)
                 >= state.mail_unique_username_threshold
                 and ip not in state.mail_password_spray_alerted
             ):
@@ -324,7 +396,8 @@ def _process_mail_event(
                     message=(
                         "Mail password spray behavior detected from "
                         f"{ip} against "
-                        f"{len(state.mail_failed_usernames[ip])} accounts"
+                        f"{len(unique_usernames)} accounts within "
+                        f"{state.mail_unique_username_window_seconds}s"
                     ),
                     src_ip=ip,
                     timestamp=event.timestamp,
@@ -333,7 +406,7 @@ def _process_mail_event(
                     findings.append(finding)
 
         if (
-            state.mail_failed_counts[ip] >= state.mail_failed_login_threshold
+            len(failure_times) >= state.mail_failed_login_threshold
             and ip not in state.mail_threshold_alerted
         ):
             state.mail_threshold_alerted.add(ip)
@@ -342,7 +415,8 @@ def _process_mail_event(
                 finding_type="repeated_mail_auth_failures",
                 message=(
                     "Repeated mail authentication failures detected "
-                    f"from {ip} ({state.mail_failed_counts[ip]} failures)"
+                    f"from {ip} ({len(failure_times)} failures within "
+                    f"{state.mail_failure_window_seconds}s)"
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -351,14 +425,21 @@ def _process_mail_event(
                 findings.append(finding)
 
     if event.event_type == "dovecot_success_login":
-        prior_failures = state.mail_failed_counts[ip]
+        failure_times = state.mail_failed_times[ip]
+        _prune_datetimes(
+            failure_times,
+            event.timestamp,
+            state.success_after_failures_window_seconds,
+        )
+        prior_failures = len(failure_times)
         if prior_failures >= 1:
             finding = _make_finding(
                 state=state,
                 finding_type="mail_success_after_failures",
                 message=(
                     "Successful mail login after prior failures from "
-                    f"{ip} ({prior_failures} failures before success)"
+                    f"{ip} ({prior_failures} failures within "
+                    f"{state.success_after_failures_window_seconds}s before success)"
                 ),
                 src_ip=ip,
                 timestamp=event.timestamp,
@@ -383,6 +464,11 @@ def _check_cross_source_correlations(
         event.source == "auth"
         and web_probe_time is not None
         and web_probe_time < event.timestamp
+        and _within_window(
+            web_probe_time,
+            event.timestamp,
+            state.web_auth_correlation_window_seconds,
+        )
     ):
         if ip not in state.web_to_auth_alerted:
             state.web_to_auth_alerted.add(ip)
@@ -421,11 +507,29 @@ def _check_cross_source_correlations(
                 findings.append(finding)
 
     observed_sources = 0
-    if ip in state.web_activity_ips:
+    if _source_recently_seen(
+        state,
+        ip,
+        "nginx",
+        event.timestamp,
+        state.multi_source_window_seconds,
+    ):
         observed_sources += 1
-    if ip in state.auth_activity_ips:
+    if _source_recently_seen(
+        state,
+        ip,
+        "auth",
+        event.timestamp,
+        state.multi_source_window_seconds,
+    ):
         observed_sources += 1
-    if ip in state.mail_activity_ips:
+    if _source_recently_seen(
+        state,
+        ip,
+        "mail",
+        event.timestamp,
+        state.multi_source_window_seconds,
+    ):
         observed_sources += 1
 
     if observed_sources >= 2:
@@ -461,6 +565,11 @@ def _check_enforcement_correlations(
         action.action == "ban"
         and web_probe_time is not None
         and web_probe_time < action.timestamp
+        and _within_window(
+            web_probe_time,
+            action.timestamp,
+            state.web_ban_correlation_window_seconds,
+        )
     ):
         if ip not in state.web_to_ban_alerted:
             state.web_to_ban_alerted.add(ip)
@@ -498,3 +607,62 @@ def _make_finding(
         src_ip=src_ip,
         timestamp=timestamp,
     )
+
+
+def _prune_datetimes(
+    values: deque[datetime],
+    current_time: datetime,
+    window_seconds: int,
+) -> None:
+    """Drop timestamps that are older than the active correlation window."""
+    cutoff = current_time - timedelta(seconds=window_seconds)
+    while values and values[0] < cutoff:
+        values.popleft()
+
+
+def _prune_pairs(
+    values: deque[tuple[datetime, str]],
+    current_time: datetime,
+    window_seconds: int,
+) -> None:
+    """Drop timestamp/value pairs outside the active correlation window."""
+    cutoff = current_time - timedelta(seconds=window_seconds)
+    while values and values[0][0] < cutoff:
+        values.popleft()
+
+
+def _track_source_activity(
+    state: DetectionState,
+    ip: str,
+    source: str,
+    timestamp: datetime,
+) -> None:
+    """Record source activity for later multi-source correlation."""
+    activity = state.source_activity_times[ip][source]
+    activity.append(timestamp)
+    _prune_datetimes(activity, timestamp, state.multi_source_window_seconds)
+
+
+def _source_recently_seen(
+    state: DetectionState,
+    ip: str,
+    source: str,
+    current_time: datetime,
+    window_seconds: int,
+) -> bool:
+    """Return True when the source has activity inside the given window."""
+    activity = state.source_activity_times[ip][source]
+    if not activity:
+        return False
+
+    _prune_datetimes(activity, current_time, window_seconds)
+    return bool(activity)
+
+
+def _within_window(
+    earlier: datetime,
+    later: datetime,
+    window_seconds: int,
+) -> bool:
+    """Return True when a later event falls within the correlation window."""
+    return (later - earlier).total_seconds() <= window_seconds

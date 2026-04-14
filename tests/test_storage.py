@@ -32,6 +32,8 @@ def test_initialize_database_creates_tables() -> None:
     assert "events" in table_names
     assert "findings" in table_names
     assert "enforcement_actions" in table_names
+    assert "incidents" in table_names
+    assert "incident_evidence" in table_names
 
     connection.close()
 
@@ -106,6 +108,12 @@ def test_insert_nginx_event_persists_http_fields() -> None:
         process="nginx",
         method="GET",
         path="/wp-login.php",
+        normalized_path="/wp-login.php",
+        query_string="attempt=1",
+        referrer="https://example.test/",
+        user_agent="curl/8.7.1",
+        match_reason="exact_path",
+        bytes_sent=404,
         status_code=404,
     )
 
@@ -120,6 +128,12 @@ def test_insert_nginx_event_persists_http_fields() -> None:
             src_ip,
             method,
             path,
+            normalized_path,
+            query_string,
+            referrer,
+            user_agent,
+            match_reason,
+            bytes_sent,
             status_code
         FROM events
         """
@@ -132,6 +146,12 @@ def test_insert_nginx_event_persists_http_fields() -> None:
     assert row["src_ip"] == "185.10.10.1"
     assert row["method"] == "GET"
     assert row["path"] == "/wp-login.php"
+    assert row["normalized_path"] == "/wp-login.php"
+    assert row["query_string"] == "attempt=1"
+    assert row["referrer"] == "https://example.test/"
+    assert row["user_agent"] == "curl/8.7.1"
+    assert row["match_reason"] == "exact_path"
+    assert row["bytes_sent"] == 404
     assert row["status_code"] == 404
 
     connection.close()

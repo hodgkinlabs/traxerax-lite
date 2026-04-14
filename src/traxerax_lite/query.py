@@ -511,6 +511,12 @@ def get_events_for_ip(
             jail,
             method,
             path,
+            normalized_path,
+            query_string,
+            referrer,
+            user_agent,
+            match_reason,
+            bytes_sent,
             status_code,
             raw
         FROM events

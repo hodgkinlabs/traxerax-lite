@@ -23,6 +23,12 @@ class Event:
     jail: Optional[str] = None
     method: Optional[str] = None
     path: Optional[str] = None
+    normalized_path: Optional[str] = None
+    query_string: Optional[str] = None
+    referrer: Optional[str] = None
+    user_agent: Optional[str] = None
+    match_reason: Optional[str] = None
+    bytes_sent: Optional[int] = None
     status_code: Optional[int] = None
 
 

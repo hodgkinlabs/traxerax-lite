@@ -43,6 +43,12 @@ def initialize_database(connection: sqlite3.Connection) -> None:
             jail TEXT,
             method TEXT,
             path TEXT,
+            normalized_path TEXT,
+            query_string TEXT,
+            referrer TEXT,
+            user_agent TEXT,
+            match_reason TEXT,
+            bytes_sent INTEGER,
             status_code INTEGER
         )
         """
@@ -78,7 +84,43 @@ def initialize_database(connection: sqlite3.Connection) -> None:
         """
     )
 
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            src_ip TEXT NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            source_count INTEGER NOT NULL,
+            evidence_count INTEGER NOT NULL,
+            finding_count INTEGER NOT NULL,
+            summary TEXT NOT NULL
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incident_evidence (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id INTEGER NOT NULL,
+            evidence_type TEXT NOT NULL,
+            evidence_ref_id INTEGER NOT NULL,
+            evidence_timestamp TEXT NOT NULL,
+            FOREIGN KEY (incident_id) REFERENCES incidents(id)
+        )
+        """
+    )
+
     _migrate_legacy_fail2ban_events(connection)
+    _ensure_column(connection, "events", "normalized_path", "TEXT")
+    _ensure_column(connection, "events", "query_string", "TEXT")
+    _ensure_column(connection, "events", "referrer", "TEXT")
+    _ensure_column(connection, "events", "user_agent", "TEXT")
+    _ensure_column(connection, "events", "match_reason", "TEXT")
+    _ensure_column(connection, "events", "bytes_sent", "INTEGER")
 
     connection.commit()
 
@@ -101,6 +143,12 @@ def make_event_hash(event: Event) -> str:
             str(event.jail),
             str(event.method),
             str(event.path),
+            str(event.normalized_path),
+            str(event.query_string),
+            str(event.referrer),
+            str(event.user_agent),
+            str(event.match_reason),
+            str(event.bytes_sent),
             str(event.status_code),
         ]
     )
@@ -174,9 +222,15 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             jail,
             method,
             path,
+            normalized_path,
+            query_string,
+            referrer,
+            user_agent,
+            match_reason,
+            bytes_sent,
             status_code
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_hash,
@@ -194,6 +248,12 @@ def insert_event(connection: sqlite3.Connection, event: Event) -> None:
             event.jail,
             event.method,
             event.path,
+            event.normalized_path,
+            event.query_string,
+            event.referrer,
+            event.user_agent,
+            event.match_reason,
+            event.bytes_sent,
             event.status_code,
         ),
     )
@@ -326,3 +386,22 @@ def _migrate_legacy_fail2ban_events(connection: sqlite3.Connection) -> None:
             WHERE source = 'fail2ban'
             """
         )
+
+
+def _ensure_column(
+    connection: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    """Add a column to an existing table when it is missing."""
+    rows = connection.execute(
+        f"PRAGMA table_info({table_name})"
+    ).fetchall()
+    existing = {row["name"] for row in rows}
+    if column_name in existing:
+        return
+
+    connection.execute(
+        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+    )

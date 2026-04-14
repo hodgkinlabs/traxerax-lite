@@ -4,6 +4,18 @@ detection:
     mail_failed_login: 3
     mail_unique_usernames: 3
     repeated_http_error: 3
+  windows:
+    auth_failed_login_seconds: 900
+    mail_failed_login_seconds: 900
+    mail_unique_usernames_seconds: 900
+    repeated_http_error_seconds: 900
+    success_after_failures_seconds: 3600
+    web_to_auth_seconds: 3600
+    web_to_ban_seconds: 3600
+    multi_source_seconds: 3600
+  incidents:
+    gap_seconds: 1800
+    minimum_evidence: 2
   rules:
     root_login_attempt: true
     repeated_failed_login: true
@@ -188,3 +200,10 @@ nginx:
     - '(?:%00|\\x00|\x00)'
     - '(?:/|^)(?:cgi-bin|\.git|\.svn|\.hg)(?:/|$)'
     - '(?:/|^)(?:backup|backups|dump|db)(?:[_\-.].*)?\.(?:zip|tar|gz|tgz|bz2|7z|sql)(?:$|[/?#])'
+
+baseline:
+  ignored_source_ips: []
+  ignored_source_cidrs: []
+  ignored_usernames: []
+  ignored_nginx_paths: []
+  ignored_user_agent_patterns: []

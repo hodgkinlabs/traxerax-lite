@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Any
 
 import yaml
@@ -50,6 +51,16 @@ class DetectionSettings:
             504,
         }
     )
+    auth_failure_window_seconds: int = 900
+    mail_failure_window_seconds: int = 900
+    mail_unique_username_window_seconds: int = 900
+    http_error_window_seconds: int = 900
+    success_after_failures_window_seconds: int = 3600
+    web_auth_correlation_window_seconds: int = 3600
+    web_ban_correlation_window_seconds: int = 3600
+    multi_source_window_seconds: int = 3600
+    incident_gap_window_seconds: int = 1800
+    incident_min_evidence: int = 2
     enabled_rules: dict[str, bool] = field(
         default_factory=lambda: {
             finding_type: True
@@ -98,6 +109,17 @@ class ReportSettings:
     priority_weight_web_probe_followed_by_ban: int = 3
 
 
+@dataclass(slots=True)
+class BaselineSettings:
+    """Normalized suppression and baselining settings."""
+
+    ignored_source_ips: set[str] = field(default_factory=set)
+    ignored_source_cidrs: tuple[str, ...] = ()
+    ignored_usernames: set[str] = field(default_factory=set)
+    ignored_nginx_paths: set[str] = field(default_factory=set)
+    ignored_user_agent_patterns: tuple[re.Pattern[str], ...] = ()
+
+
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     """Load YAML config file."""
     config_path = Path(path)
@@ -122,6 +144,8 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
     thresholds = _as_dict(detection_config.get("thresholds"))
     rules = _as_dict(detection_config.get("rules"))
     severities = _as_dict(detection_config.get("severities"))
+    windows = _as_dict(detection_config.get("windows"))
+    incident_config = _as_dict(detection_config.get("incidents"))
     nginx_config = _as_dict(config.get("nginx"))
 
     settings = DetectionSettings(
@@ -147,6 +171,36 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
                 DetectionSettings().http_error_statuses,
             )
         },
+        auth_failure_window_seconds=int(
+            windows.get("auth_failed_login_seconds", 900)
+        ),
+        mail_failure_window_seconds=int(
+            windows.get("mail_failed_login_seconds", 900)
+        ),
+        mail_unique_username_window_seconds=int(
+            windows.get("mail_unique_usernames_seconds", 900)
+        ),
+        http_error_window_seconds=int(
+            windows.get("repeated_http_error_seconds", 900)
+        ),
+        success_after_failures_window_seconds=int(
+            windows.get("success_after_failures_seconds", 3600)
+        ),
+        web_auth_correlation_window_seconds=int(
+            windows.get("web_to_auth_seconds", 3600)
+        ),
+        web_ban_correlation_window_seconds=int(
+            windows.get("web_to_ban_seconds", 3600)
+        ),
+        multi_source_window_seconds=int(
+            windows.get("multi_source_seconds", 3600)
+        ),
+        incident_gap_window_seconds=int(
+            incident_config.get("gap_seconds", 1800)
+        ),
+        incident_min_evidence=int(
+            incident_config.get("minimum_evidence", 2)
+        ),
     )
 
     for finding_type in settings.enabled_rules:
@@ -161,6 +215,46 @@ def load_detection_settings(config: dict[str, Any]) -> DetectionSettings:
         )
 
     return settings
+
+
+def load_baseline_settings(config: dict[str, Any]) -> BaselineSettings:
+    """Return normalized baselining and suppression settings."""
+    baseline_config = _as_dict(config.get("baseline"))
+    suppression_config = _as_dict(config.get("suppression"))
+    merged = {
+        **baseline_config,
+        **suppression_config,
+    }
+
+    ignored_paths = {
+        str(path).rstrip("/") or "/"
+        for path in merged.get("ignored_nginx_paths", [])
+    }
+    ignored_user_agent_patterns = tuple(
+        re.compile(pattern, re.IGNORECASE)
+        for pattern in merged.get("ignored_user_agent_patterns", [])
+        if isinstance(pattern, str) and pattern
+    )
+
+    return BaselineSettings(
+        ignored_source_ips={
+            str(value)
+            for value in merged.get("ignored_source_ips", [])
+            if value is not None
+        },
+        ignored_source_cidrs=tuple(
+            str(value)
+            for value in merged.get("ignored_source_cidrs", [])
+            if value is not None
+        ),
+        ignored_usernames={
+            str(value)
+            for value in merged.get("ignored_usernames", [])
+            if value is not None
+        },
+        ignored_nginx_paths=ignored_paths,
+        ignored_user_agent_patterns=ignored_user_agent_patterns,
+    )
 
 
 def load_report_settings(config: dict[str, Any]) -> ReportSettings:

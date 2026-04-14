@@ -231,6 +231,55 @@ nginx:
         assert finding[1] == "low"
 
 
+def test_main_suppresses_configured_baseline_ip() -> None:
+    """Configured baseline IPs should be excluded from stored telemetry."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = Path(tmpdir) / "test.db"
+        config_path = Path(tmpdir) / "config.yaml"
+        auth_log = Path(tmpdir) / "auth.log"
+
+        config_path.write_text(
+            """
+baseline:
+  ignored_source_ips:
+    - "185.10.10.1"
+"""
+        )
+        auth_log.write_text(
+            (
+                "Mar 25 10:00:01 debian sshd[2001]: Failed password for "
+                "invalid user admin from 185.10.10.1 port 40001 ssh2\n"
+            )
+        )
+
+        import sys
+
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "main.py",
+                "--config",
+                str(config_path),
+                "--db-path",
+                str(db_path),
+                "--auth-log",
+                str(auth_log),
+                "--year",
+                "2026",
+            ]
+            main()
+        finally:
+            sys.argv = original_argv
+
+        conn = get_connection(str(db_path))
+        event_count = conn.execute(
+            "SELECT COUNT(*) AS count FROM events"
+        ).fetchone()[0]
+        conn.close()
+
+        assert event_count == 0
+
+
 def test_main_uses_mail_password_spray_threshold_and_severity_from_config() -> None:
     """Configured mail spray settings should affect persisted findings."""
     with tempfile.TemporaryDirectory() as tmpdir:

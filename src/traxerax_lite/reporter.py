@@ -16,6 +16,10 @@ def format_event(event: Event) -> str:
     jail = event.jail or "-"
     method = event.method or "-"
     path = event.path or "-"
+    normalized_path = event.normalized_path or "-"
+    referrer = event.referrer or "-"
+    user_agent = event.user_agent or "-"
+    bytes_sent = event.bytes_sent if event.bytes_sent is not None else "-"
     status_code = event.status_code if event.status_code is not None else "-"
 
     return (
@@ -31,6 +35,10 @@ def format_event(event: Event) -> str:
         f"jail={jail} "
         f"method={method} "
         f"path={path} "
+        f"normalized_path={normalized_path} "
+        f"referrer={referrer} "
+        f"user_agent={user_agent} "
+        f"bytes={bytes_sent} "
         f"status={status_code}"
     )
 
@@ -84,6 +92,12 @@ def json_format_event(event: Event) -> str:
         "jail": event.jail,
         "method": event.method,
         "path": event.path,
+        "normalized_path": event.normalized_path,
+        "query_string": event.query_string,
+        "referrer": event.referrer,
+        "user_agent": event.user_agent,
+        "match_reason": event.match_reason,
+        "bytes_sent": event.bytes_sent,
         "status_code": event.status_code,
     }
     return json.dumps(data)

@@ -2,12 +2,15 @@
 
 import logging
 import re
-from datetime import datetime, timezone, tzinfo
+import sqlite3
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Callable
 
+from traxerax_lite.baseline import should_suppress_action, should_suppress_event
 from traxerax_lite.cli import build_parser
 from traxerax_lite.collector import read_lines
 from traxerax_lite.config import (
+    load_baseline_settings,
     load_config,
     load_detection_settings,
     load_report_settings,
@@ -17,6 +20,8 @@ from traxerax_lite.detector import (
     process_enforcement_action,
     process_event,
 )
+from traxerax_lite.hunt import build_hunt_report
+from traxerax_lite.incidents import rebuild_incidents
 from traxerax_lite.models import EnforcementAction, Event
 from traxerax_lite.parser import (
     parse_auth_line,
@@ -45,6 +50,7 @@ def main() -> None:
     config = load_config(args.config)
     detection_settings = load_detection_settings(config)
     report_settings = load_report_settings(config)
+    baseline_settings = load_baseline_settings(config)
     nginx_config = config.get("nginx", {})
     nginx_paths = nginx_config.get("suspicious_paths", [])
     nginx_path_patterns = [
@@ -58,6 +64,7 @@ def main() -> None:
 
     try:
         if args.report:
+            rebuild_incidents(connection, detection_settings)
             if args.report == "summary":
                 logger.info(build_summary_report(connection, report_settings))
                 return
@@ -66,6 +73,17 @@ def main() -> None:
                 if not args.ip:
                     parser.error("--report ip requires --ip")
                 logger.info(build_ip_report(connection, args.ip, report_settings))
+                return
+
+            if args.report == "hunt":
+                if not args.hunt_preset:
+                    parser.error("--report hunt requires --hunt-preset")
+                logger.info(
+                    build_hunt_report(
+                        connection,
+                        preset=args.hunt_preset,
+                    )
+                )
                 return
 
         if (
@@ -94,19 +112,32 @@ def main() -> None:
             nginx_paths=nginx_paths,
             nginx_path_patterns=nginx_path_patterns,
         )
+        _seed_detection_state_from_history(
+            connection=connection,
+            state=state,
+            ordered_records=ordered_records,
+            baseline_settings=baseline_settings,
+        )
 
         for record in ordered_records:
-            parsed_count += 1
             if isinstance(record, Event):
+                if should_suppress_event(record, baseline_settings):
+                    continue
+                parsed_count += 1
                 insert_event(connection, record)
                 findings = process_event(record, state)
             else:
+                if should_suppress_action(record, baseline_settings):
+                    continue
+                parsed_count += 1
                 insert_enforcement_action(connection, record)
                 findings = process_enforcement_action(record, state)
 
             for finding in findings:
                 finding_count += 1
                 insert_finding(connection, finding)
+
+        rebuild_incidents(connection, detection_settings)
 
         logger.info("\n[SUMMARY]")
         logger.info(f"parsed_events={parsed_count}")
@@ -180,6 +211,88 @@ def _collect_normalized_events(
 
     collected.sort(key=lambda item: (item[0], item[1]))
     return [record for _, _, record in collected]
+
+
+def _seed_detection_state_from_history(
+    connection: sqlite3.Connection,
+    state: DetectionState,
+    ordered_records: list[Event | EnforcementAction],
+    baseline_settings,
+) -> None:
+    """Warm the in-memory detector with recent persisted telemetry."""
+    if not ordered_records:
+        return
+
+    earliest = ordered_records[0].timestamp
+    max_window_seconds = max(
+        state.auth_failure_window_seconds,
+        state.mail_failure_window_seconds,
+        state.mail_unique_username_window_seconds,
+        state.http_error_window_seconds,
+        state.success_after_failures_window_seconds,
+        state.web_auth_correlation_window_seconds,
+        state.web_ban_correlation_window_seconds,
+        state.multi_source_window_seconds,
+    )
+    cutoff_time = earliest - timedelta(seconds=max_window_seconds)
+
+    historical_events = connection.execute(
+        """
+        SELECT *
+        FROM events
+        WHERE timestamp >= ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (cutoff_time.isoformat(sep=" "),),
+    ).fetchall()
+    for row in historical_events:
+        event = Event(
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            source=row["source"],
+            event_type=row["event_type"],
+            raw=row["raw"],
+            username=row["username"],
+            src_ip=row["src_ip"],
+            port=row["port"],
+            service=row["service"],
+            hostname=row["hostname"],
+            process=row["process"],
+            action=row["action"],
+            jail=row["jail"],
+            method=row["method"],
+            path=row["path"],
+            normalized_path=row["normalized_path"],
+            query_string=row["query_string"],
+            referrer=row["referrer"],
+            user_agent=row["user_agent"],
+            match_reason=row["match_reason"],
+            bytes_sent=row["bytes_sent"],
+            status_code=row["status_code"],
+        )
+        if not should_suppress_event(event, baseline_settings):
+            process_event(event, state)
+
+    historical_actions = connection.execute(
+        """
+        SELECT *
+        FROM enforcement_actions
+        WHERE timestamp >= ?
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (cutoff_time.isoformat(sep=" "),),
+    ).fetchall()
+    for row in historical_actions:
+        action = EnforcementAction(
+            timestamp=datetime.fromisoformat(row["timestamp"]),
+            raw=row["raw"],
+            src_ip=row["src_ip"],
+            action=row["action"],
+            service=row["service"],
+            process=row["process"],
+            jail=row["jail"],
+        )
+        if not should_suppress_action(action, baseline_settings):
+            process_enforcement_action(action, state)
 
 
 if __name__ == "__main__":

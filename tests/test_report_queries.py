@@ -116,6 +116,7 @@ def test_build_summary_report_includes_persistence_sections() -> None:
     assert "reporting_window:" in report
     assert "bottom_line_assessment:" in report
     assert "top_risky_source_ips:" in report
+    assert "incident_queue:" in report
     assert "top_noisy_source_ips:" in report
     assert "repeat_banned_ips:" in report
     assert "returned_after_ban_ips:" in report
@@ -215,6 +216,7 @@ def test_build_ip_report_includes_persistence_flags() -> None:
 
     assert "[REPORT] ip=185.10.10.1" in report
     assert "persistence_flags:" in report
+    assert "incident_groups:" in report
     assert "active_window:" in report
     assert "source_count: 2" in report
     assert "ban_count: 1" in report

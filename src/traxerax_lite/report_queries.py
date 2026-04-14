@@ -5,6 +5,11 @@ from datetime import datetime
 from typing import Any
 
 from traxerax_lite.config import ReportSettings
+from traxerax_lite.incidents import (
+    get_incident_evidence,
+    get_incidents_for_ip,
+    get_top_incidents,
+)
 from traxerax_lite.query import (
     get_enforcement_actions_for_ip,
     get_event_counts_by_source_for_ip,
@@ -179,6 +184,26 @@ def build_summary_report(
         lines.append("  - none")
 
     lines.append("")
+    lines.append("incident_queue:")
+    top_incidents = get_top_incidents(
+        connection,
+        limit=settings.top_risky_source_ips_limit,
+    )
+    if top_incidents:
+        for incident in top_incidents:
+            lines.append(
+                f"  - incident_id={incident['id']} "
+                f"ip={incident['src_ip']} "
+                f"score={incident['score']} "
+                f"severity={incident['severity']} "
+                f"window={_format_time_window_duration(incident['start_time'], incident['end_time'])} "
+                f"evidence={incident['evidence_count']} "
+                f"summary={incident['summary']}"
+            )
+    else:
+        lines.append("  - none")
+
+    lines.append("")
     lines.append("top_noisy_source_ips:")
     if top_noisy_ips:
         for row in top_noisy_ips:
@@ -290,6 +315,7 @@ def build_ip_report(
     persistence_stats = get_ip_persistence_stats(connection, src_ip)
     post_ban_activity_count = get_ip_post_ban_activity_count(connection, src_ip)
     post_ban_return_count = get_ip_post_ban_return_count(connection, src_ip)
+    incidents = get_incidents_for_ip(connection, src_ip)
 
     events = get_events_for_ip(connection, src_ip)
     enforcement_actions = get_enforcement_actions_for_ip(connection, src_ip)
@@ -398,6 +424,29 @@ def build_ip_report(
         lines.append("  - none")
 
     lines.append("")
+    lines.append("incident_groups:")
+    if incidents:
+        for incident in incidents:
+            evidence = get_incident_evidence(connection, incident["id"])
+            lines.append(
+                f"  - incident_id={incident['id']} "
+                f"start={incident['start_time']} "
+                f"end={incident['end_time']} "
+                f"severity={incident['severity']} "
+                f"score={incident['score']} "
+                f"evidence={incident['evidence_count']} "
+                f"summary={incident['summary']}"
+            )
+            if evidence:
+                evidence_preview = ", ".join(
+                    f"{item['evidence_type']}#{item['evidence_ref_id']}"
+                    for item in evidence[:5]
+                )
+                lines.append(f"  - evidence_links: {evidence_preview}")
+    else:
+        lines.append("  - none")
+
+    lines.append("")
     lines.append("event_counts_by_source:")
     if source_counts:
         for row in source_counts:
@@ -471,8 +520,20 @@ def build_ip_report(
                 details.append(f"method={row['method']}")
             if row["path"] is not None:
                 details.append(f"path={row['path']}")
+            if row["normalized_path"] is not None:
+                details.append(f"normalized_path={row['normalized_path']}")
+            if row["query_string"] is not None:
+                details.append(f"query={row['query_string']}")
             if row["status_code"] is not None:
                 details.append(f"status={row['status_code']}")
+            if row["match_reason"] is not None:
+                details.append(f"match={row['match_reason']}")
+            if row["bytes_sent"] is not None:
+                details.append(f"bytes={row['bytes_sent']}")
+            if row["referrer"] is not None:
+                details.append(f"referrer={row['referrer']}")
+            if row["user_agent"] is not None:
+                details.append(f"user_agent={row['user_agent']}")
 
             lines.append(f"  - {row['timestamp']} | " + " ".join(details))
     else:

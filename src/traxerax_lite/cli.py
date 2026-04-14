@@ -38,13 +38,26 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--report",
-        choices=["summary", "ip"],
+        choices=["summary", "ip", "hunt"],
         help="Generate a report from stored SQLite data",
     )
 
     parser.add_argument(
         "--ip",
         help="Source IP for per-IP investigation report",
+    )
+
+    parser.add_argument(
+        "--hunt-preset",
+        choices=[
+            "new-ips",
+            "cross-source",
+            "post-ban-returners",
+            "auth-success-after-failures",
+            "sprayed-users",
+            "suspicious-paths",
+        ],
+        help="Preset report for threat-hunting workflows",
     )
 
     parser.add_argument(

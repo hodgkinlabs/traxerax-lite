@@ -36,7 +36,8 @@ FAIL2BAN_PATTERN = re.compile(
 NGINX_ACCESS_PATTERN = re.compile(
     r'^(?P<ip>\S+)\s+\S+\s+\S+\s+\[(?P<ts>[^\]]+)\]\s+'
     r'"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[^"]+"\s+'
-    r'(?P<status>\d{3})\s+\S+'
+    r'(?P<status>\d{3})\s+(?P<bytes>\S+)\s+'
+    r'"(?P<referrer>[^"]*)"\s+"(?P<user_agent>[^"]*)"'
 )
 
 DOVECOT_FAILED_PATTERN = re.compile(
@@ -190,13 +191,24 @@ def parse_nginx_access_line(
     timestamp = parsed_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
 
     path = match.group("path")
+    parsed_path = urlsplit(path)
+    normalized_path = parsed_path.path.rstrip("/") or "/"
     event_type = "nginx_request"
+    match_reason = None
     if is_suspicious_request_target(
         path,
         suspicious_paths,
         suspicious_path_patterns,
     ):
         event_type = "nginx_suspicious_request"
+        match_reason = _match_reason(
+            path,
+            suspicious_paths,
+            suspicious_path_patterns,
+        )
+
+    bytes_field = match.group("bytes")
+    bytes_sent = int(bytes_field) if bytes_field.isdigit() else None
 
     return Event(
         timestamp=timestamp,
@@ -208,6 +220,12 @@ def parse_nginx_access_line(
         process="nginx",
         method=match.group("method"),
         path=path,
+        normalized_path=normalized_path,
+        query_string=parsed_path.query or None,
+        referrer=match.group("referrer") or None,
+        user_agent=match.group("user_agent") or None,
+        match_reason=match_reason,
+        bytes_sent=bytes_sent,
         status_code=int(match.group("status")),
     )
 
@@ -337,3 +355,28 @@ def _to_utc_naive(timestamp: datetime, local_timezone: tzinfo) -> datetime:
         timestamp = timestamp.replace(tzinfo=local_timezone)
 
     return timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _match_reason(
+    path: str,
+    suspicious_paths: Iterable[str],
+    suspicious_path_patterns: Iterable[re.Pattern[str]],
+) -> str | None:
+    """Return why a suspicious request matched configuration."""
+    if is_suspicious_path(path, suspicious_paths):
+        return "exact_path"
+
+    parsed = urlsplit(path)
+    normalized_path = parsed.path.rstrip("/") or "/"
+    candidates = (
+        path,
+        normalized_path,
+        unquote(path),
+        unquote(normalized_path),
+    )
+
+    for pattern in suspicious_path_patterns:
+        if any(pattern.search(candidate) for candidate in candidates):
+            return f"pattern:{pattern.pattern}"
+
+    return None
